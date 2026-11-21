@@ -10,6 +10,25 @@ import storage
 
 
 class StorageTests(unittest.TestCase):
+    def test_packaging_and_running_reject_guest_identity_from_another_user(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(storage, "DATA", Path(temporary)), \
+                patch.object(storage, "inputs", return_value={}), \
+                patch.object(storage.runtime, "verify_upstream"), \
+                patch.object(storage.runtime, "prepare_patches"), \
+                patch.object(storage.postgres, "prepare_sources"), \
+                patch.object(storage.runtime.os, "getuid", return_value=1001), \
+                patch.object(storage.runtime.os, "getgid", return_value=2001):
+            for filename, check in (("host.json", storage.package), ("build.json", storage.verify)):
+                for identity in (None, {"uid": 1000, "gid": 1000},
+                                 {"uid": 1001, "gid": 2002}):
+                    (Path(temporary) / filename).write_text(json.dumps(
+                        {"inputs": {}, "rust_build": storage.runtime.RUST_BUILD,
+                         "guest_identity": identity}))
+                    with self.subTest(command=check.__name__, identity=identity):
+                        with self.assertRaisesRegex(RuntimeError, "UID/GID changed"):
+                            check()
+
     def test_release_metadata_is_required_before_packaging_or_running(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(storage, "DATA", Path(temporary)), \

@@ -24,7 +24,12 @@ int main(void)
     REQUIRE(pread(fd, buf, 8, 0) == 4);
     REQUIRE(fsync(fd) == 0 && fdatasync(fd) == 0);
     struct stat st;
-    REQUIRE(fstat(fd, &st) == 0 && st.st_size == 4 && (st.st_mode & 0777) == 0600 &&
+    REQUIRE(fstat(fd, &st) == 0);
+    if (st.st_uid != geteuid() || st.st_gid != getegid())
+        fprintf(stderr, "storage ownership uid=%lu gid=%lu expected uid=%lu gid=%lu\n",
+                (unsigned long)st.st_uid, (unsigned long)st.st_gid,
+                (unsigned long)geteuid(), (unsigned long)getegid());
+    REQUIRE(st.st_size == 4 && (st.st_mode & 0777) == 0600 &&
             st.st_uid == geteuid() && st.st_gid == getegid());
     REQUIRE(fchmod(fd, 0640) == 0);
     REQUIRE(fstat(fd, &st) == 0 && (st.st_mode & 0777) == 0640);

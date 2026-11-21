@@ -1,0 +1,69 @@
+name: PostgreSQL 16 build and tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: pg16
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            binutils bison build-essential cpio curl flex git m4 \
+            musl-tools python3 util-linux
+
+      - name: Check prerequisites and fetch pinned sources
+        run: make preflight fetch
+
+      - name: Install upstream-pinned Rust toolchain
+        working-directory: pg16/target/postgres-experiment/sources/hyperlight-unikraft
+        run: rustup toolchain install
+
+      - name: Build native PostgreSQL, guest, and storage host
+        run: make setup
+
+      - name: Run native, KVM, storage, recovery, and benchmark tests
+        run: make validate
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: pg16-failure-diagnostics
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            pg16/target/postgres-experiment/*.log
+            pg16/target/postgres-experiment/*-results.json
+            pg16/target/postgres-experiment/preflight.json
+            pg16/target/postgres-experiment/phase*/**/*.log
+            pg16/target/postgres-experiment/phase*/**/results.json
+            pg16/target/postgres-experiment/read-benchmark/**/*.log
+            pg16/target/postgres-experiment/read-benchmark/**/results.json

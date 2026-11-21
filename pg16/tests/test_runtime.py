@@ -11,6 +11,34 @@ SPEC.loader.exec_module(runtime)
 
 
 class ResultTests(unittest.TestCase):
+    def test_guest_kernel_identity_matches_host_and_invalidates_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "defconfig-elfloader").write_text("CONFIG_TEST=y\n")
+            overlay = root / "kernel.conf"
+            overlay.write_text('CONFIG_LIBPOSIX_USER_USERNAME="phase2"\n')
+            with patch.object(runtime, "UPSTREAM", root), \
+                    patch.object(runtime, "patch_files", return_value=[]), \
+                    patch.object(runtime, "pins", return_value={}), \
+                    patch.object(runtime.os, "getuid", return_value=1001), \
+                    patch.object(runtime.os, "getgid", return_value=2001):
+                contents, inputs = runtime.kernel_config(overlay)
+                self.assertIn(b"CONFIG_LIBPOSIX_USER_UID=1001\n", contents)
+                self.assertIn(b"CONFIG_LIBPOSIX_USER_GID=2001\n", contents)
+                self.assertEqual(inputs["guest_identity"], {"uid": 1001, "gid": 2001})
+                with patch.object(runtime.os, "getgid", return_value=2002):
+                    changed_contents, changed_inputs = runtime.kernel_config(overlay)
+                self.assertNotEqual(contents, changed_contents)
+                self.assertNotEqual(inputs, changed_inputs)
+                contents, inputs = runtime.kernel_config(None)
+                self.assertEqual(contents, b"CONFIG_TEST=y\n")
+                self.assertNotIn("guest_identity", inputs)
+
+    def test_guest_identity_rejects_root(self):
+        with patch.object(runtime.os, "getuid", return_value=0):
+            with self.assertRaisesRegex(RuntimeError, "non-root"):
+                runtime.guest_identity()
+
     def test_standalone_runtime_command_keeps_artifacts_in_its_sample_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

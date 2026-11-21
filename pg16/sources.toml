@@ -17,8 +17,3 @@ license = "Apache-2.0; LICENSE"
 [hyperlight-unikraft.dependencies]
 hyperlight-host = "0.19.0"
 hyperlight-common = "0.19.0"
-
-[bsdkrun]
-url = "https://github.com/tsirysndr/bsdkrun.git"
-commit = "b31ff8ebed68d0ea9cba88345f4a99dc13c01fb7"
-license = "MIT; LICENSE (individual patches must also retain original notices)"

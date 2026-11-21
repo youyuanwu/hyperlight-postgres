@@ -21,8 +21,8 @@ and client tools are built from a separate, unmodified source tree.
 | 0002 | Anonymous mmap main shared memory in one address space, validated child header, child detach without unmapping, and target-only mmap GUC support under EXEC_BACKEND; no SysV IPC requirement. |
 | 0003 | DSM descriptors name anonymous mappings; attach validates a per-VM generation; detach preserves other users; destroy resolves even mappings not attached by its caller. Inspired by `dsm-single-address-space.patch`, with additional lifetime, bounds, and error handling. |
 
-The guest kernel profile sets a fixed uid/gid 1000; PostgreSQL's root and
-data-directory ownership checks are intact. Executable-path reuse assumes the
+The guest kernel profile uses the invoking non-root host user's uid/gid;
+PostgreSQL's root and data-directory ownership checks are intact. Executable-path reuse assumes the
 tested fixed package
 is not upgraded or replaced during its VM lifetime; it is not a general
 replacement for PostgreSQL's installation/version check.

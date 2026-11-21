@@ -47,6 +47,13 @@ def pins():
     return tomllib.loads((HERE / "sources.toml").read_text())
 
 
+def guest_identity():
+    uid, gid = os.getuid(), os.getgid()
+    if uid == 0:
+        raise RuntimeError("Build and run the PostgreSQL sample as a non-root host user")
+    return {"uid": uid, "gid": gid}
+
+
 def build_inputs():
     paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
              UPSTREAM / "defconfig-elfloader", UPSTREAM / "Cargo.lock"]
@@ -65,6 +72,8 @@ def write_json(path, value):
 def preflight():
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise RuntimeError("The PostgreSQL sample requires Linux x86_64")
+    identity = guest_identity()
+    print(f"Guest identity: uid={identity['uid']} gid={identity['gid']}", flush=True)
     required = ("git", "curl", "make", "gcc", "musl-gcc", "flex", "bison",
                 "m4", "cpio", "cargo", "rustc", "readelf", "timeout")
     missing = [tool for tool in required if not shutil.which(tool)]
@@ -80,20 +89,19 @@ def preflight():
     if available_kib < 2 * 1024 * 1024 or free_bytes < 4 * 1024**3:
         raise RuntimeError("Need at least 2 GiB available RAM and 4 GiB free disk")
     metadata = {"platform": platform.platform(), "cpus": os.cpu_count(),
-                "available_ram_kib": available_kib, "free_disk_bytes": free_bytes}
+                "available_ram_kib": available_kib, "free_disk_bytes": free_bytes,
+                "guest_identity": identity}
     for tool in ("gcc", "musl-gcc", "cargo", "rustc", "flex", "bison"):
         metadata[tool] = run([tool, "--version"], capture=True).splitlines()[0]
     write_json(WORK / "preflight.json", metadata)
 
 
-def checkout(name, spec, sparse=None):
+def checkout(name, spec):
     path = WORK / "sources" / name
     if not path.exists():
         run(["git", "clone", "--no-checkout", "--filter=blob:none", "--depth", "1",
              spec["url"], path])
         run(["git", "fetch", "--depth", "1", "origin", spec["commit"]], cwd=path)
-        if sparse:
-            run(["git", "sparse-checkout", "set", "--no-cone", *sparse], cwd=path)
         run(["git", "checkout", "--detach", spec["commit"]], cwd=path)
     head = run(["git", "rev-parse", "HEAD"], cwd=path, capture=True).strip()
     if head != spec["commit"]:
@@ -187,8 +195,6 @@ def fetch():
     run(["git", "submodule", "update", "--init", "--depth", "1"],
         cwd=UPSTREAM)
     verify_upstream()
-    checkout("bsdkrun", spec["bsdkrun"],
-             ["/LICENSE", "/examples/unikraft-postgres/"])
     archive = source_dir / f"postgresql-{spec['postgres']['version']}.tar.bz2"
     if not archive.exists():
         temporary = archive.with_suffix(".download")
@@ -207,11 +213,26 @@ def fetch():
             raise RuntimeError("PostgreSQL COPYRIGHT missing")
         (WORK / "postgres-COPYRIGHT").write_bytes(member.read())
     for path in (UPSTREAM / "LICENSE", UPSTREAM / "kernel/unikraft/COPYING.md",
-                 UPSTREAM / "kernel/libs/libelf/COPYING.md",
-                 source_dir / "bsdkrun/LICENSE"):
+                 UPSTREAM / "kernel/libs/libelf/COPYING.md"):
         if not path.is_file():
             raise RuntimeError(f"License missing: {path}")
     prepare_patches()
+
+
+def kernel_config(overlay):
+    patches = {name: [{"name": p.name, "sha256": digest(p)} for p in patch_files(name)]
+               for name in PATCH_TARGETS}
+    config_inputs = {"defconfig": digest(UPSTREAM / "defconfig-elfloader"),
+                     "sources": pins(), "patches": patches}
+    contents = (UPSTREAM / "defconfig-elfloader").read_bytes()
+    if overlay is not None:
+        identity = guest_identity()
+        config_inputs["overlay"] = digest(overlay)
+        config_inputs["guest_identity"] = identity
+        contents += b"\n" + overlay.read_bytes()
+        contents += (f"\nCONFIG_LIBPOSIX_USER_UID={identity['uid']}\n"
+                     f"CONFIG_LIBPOSIX_USER_GID={identity['gid']}\n").encode()
+    return contents, config_inputs
 
 
 def build(overlay=None, output=WORK):
@@ -219,14 +240,7 @@ def build(overlay=None, output=WORK):
     prepare_patches()
     kernel = UPSTREAM / "kernel"
     app = kernel / "app-elfloader"
-    patches = {name: [{"name": p.name, "sha256": digest(p)} for p in patch_files(name)]
-               for name in PATCH_TARGETS}
-    config_inputs = {"defconfig": digest(UPSTREAM / "defconfig-elfloader"),
-                     "sources": pins(), "patches": patches}
-    contents = (UPSTREAM / "defconfig-elfloader").read_bytes()
-    if overlay is not None:
-        config_inputs["overlay"] = digest(overlay)
-        contents += b"\n" + overlay.read_bytes()
+    contents, config_inputs = kernel_config(overlay)
     stamp = output / "kernel-config.json"
     saved = json.loads(stamp.read_text()) if stamp.exists() else {}
     # Use the same Make inputs as upstream, but no privileged Docker build.
@@ -267,9 +281,10 @@ def build(overlay=None, output=WORK):
                 "musl_interpreter_sha256": digest("/lib/ld-musl-x86_64.so.1"),
                 "rustc": run(["rustc", "--version"], capture=True).strip(),
                 "compiler": run(["gcc", "--version"], capture=True).splitlines()[0],
-                "patches": patches}
+                "patches": config_inputs["patches"]}
     if overlay is not None:
         metadata["overlay_sha256"] = digest(overlay)
+        metadata["guest_identity"] = config_inputs["guest_identity"]
     write_json(output / ("kernel.json" if overlay is not None else "build.json"), metadata)
 
 

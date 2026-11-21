@@ -170,6 +170,7 @@ def check_version(output):
 
 
 def package():
+    identity = runtime.guest_identity()
     prepare_sources()
     verify_postgres_install(False)
     verify_postgres_install(True)
@@ -180,6 +181,8 @@ def package():
             kernel["overlay_sha256"] != runtime.digest(HERE / "rootfs/kernel.conf") or \
             kernel["patches"] != patches:
         raise RuntimeError("Guest kernel inputs changed; run pg-kernel before packaging")
+    if kernel.get("guest_identity") != identity:
+        raise RuntimeError("Guest kernel UID/GID changed; run pg-kernel before packaging")
     if kernel["kernel_sha256"] != runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64") or \
             kernel["cli_sha256"] != runtime.digest(DATA / "hluk"):
         raise RuntimeError("Guest kernel/CLI changed since its verified build")
@@ -202,8 +205,9 @@ def package():
     shutil.copy2(Path("/lib/ld-musl-x86_64.so.1").resolve(),
                  ROOTFS / "lib/ld-musl-x86_64.so.1")
     (ROOTFS / "proc/self/maps").symlink_to("/dev/maps")
-    (ROOTFS / "etc/passwd").write_text("phase2:x:1000:1000:guest:/pgdata:/bin/false\n")
-    (ROOTFS / "etc/group").write_text("phase2:x:1000:\n")
+    (ROOTFS / "etc/passwd").write_text(
+        f"phase2:x:{identity['uid']}:{identity['gid']}:guest:/pgdata:/bin/false\n")
+    (ROOTFS / "etc/group").write_text(f"phase2:x:{identity['gid']}:\n")
     (ROOTFS / "etc/ld-musl-x86_64.path").write_text("/lib:/usr/local/lib:/usr/local/lib/postgresql\n")
     runtime.run(["musl-gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-march=x86-64", "-fPIE", "-pie", "-pthread", HERE / "rootfs/init.c",
@@ -233,7 +237,8 @@ def package():
         raise RuntimeError("Initial rootfs exceeds the 512 MiB experiment budget")
     names = sorted(str(p.relative_to(ROOTFS)) for p in ROOTFS.rglob("*"))
     with (DATA / "postgres.cpio").open("wb") as output:
-        subprocess.run(["cpio", "-o", "-H", "newc", "--reproducible", "--owner=1000:1000"],
+        subprocess.run(["cpio", "-o", "-H", "newc", "--reproducible",
+                        f"--owner={identity['uid']}:{identity['gid']}"],
                        cwd=ROOTFS, input=("\n".join(names) + "\n").encode(),
                        stdout=output, check=True)
     runtime.write_json(DATA / "build.json", {
@@ -242,7 +247,8 @@ def package():
         "archive_sha256": runtime.pins()["postgres"]["sha256"],
         "kernel_sha256": runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64"),
         "cli_sha256": runtime.digest(DATA / "hluk"),
-        "guest_uid": 1000,
+        "guest_uid": identity["uid"],
+        "guest_gid": identity["gid"],
         "kernel": json.loads((DATA / "kernel.json").read_text()),
         "postgres_guest_build": postgres_inputs(True),
         "postgres_native_build": postgres_inputs(False),
@@ -396,6 +402,14 @@ def stop_guest(process, identity):
     return process.returncode
 
 
+def validate_guest_output(output, code, uid):
+    for case in ("shared-creator-exit", "guest-ownership", "postmaster-shutdown"):
+        runtime.validate_result(case, output, code)
+    if not re.search(rf"^PG_INIT postmaster=\d+ uid={uid}$", output, re.MULTILINE) or \
+            "PG_INIT rejected invalid shutdown identity" not in output:
+        raise RuntimeError("Non-root identity or control authentication was not observed")
+
+
 def test():
     runtime.verify_upstream()
     runtime.prepare_patches()
@@ -403,6 +417,9 @@ def test():
     metadata = json.loads((DATA / "build.json").read_text())
     if metadata["inputs"] != inputs():
         raise RuntimeError("RAM-backed guest inputs changed; rebuild/repackage before SQL tests")
+    guest_identity = runtime.guest_identity()
+    if {"uid": metadata.get("guest_uid"), "gid": metadata.get("guest_gid")} != guest_identity:
+        raise RuntimeError("RAM-backed guest UID/GID changed; rebuild/repackage before SQL tests")
     for key, path in (("kernel_sha256", DATA / "kernel-build/elfloader_hyperlight-x86_64"),
                       ("cli_sha256", DATA / "hluk"),
                       ("rootfs_sha256", DATA / "postgres.cpio"),
@@ -532,10 +549,7 @@ def test():
                 runtime.write_json(DATA / "results.json", result)
     output = (DATA / "guest.log").read_text()
     try:
-        for case in ("shared-creator-exit", "guest-ownership", "postmaster-shutdown"):
-            runtime.validate_result(case, output, result["guest_exit"])
-        if "uid=1000" not in output or "PG_INIT rejected invalid shutdown identity" not in output:
-            raise RuntimeError("Non-root identity or control authentication was not observed")
+        validate_guest_output(output, result["guest_exit"], metadata["guest_uid"])
     except RuntimeError as error:
         result.update(status="failed", error=str(error))
         runtime.write_json(DATA / "results.json", result)

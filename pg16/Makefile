@@ -1,10 +1,10 @@
 .NOTPARALLEL:
-.PHONY: setup preflight fetch runtime-build process-test-native process-test-guest process-test check pg-kernel pg-native pg-guest pg-package sql-test ram-demo storage-build storage-package storage-init storage-config storage-test persistent-demo recovery-test benchmark-build benchmark read-benchmark validate
+.PHONY: setup preflight build-preflight fetch runtime-build process-test-native process-test-native-built process-test-guest process-test check pg-kernel pg-native pg-guest pg-package sql-test ram-demo storage-build storage-package storage-init storage-config storage-test persistent-demo recovery-test benchmark-build benchmark read-benchmark validate validate-built
 
 setup:
 	$(MAKE) preflight fetch pg-native pg-guest storage-build storage-package storage-init check
 
-preflight fetch:
+preflight build-preflight fetch:
 	python3 runtime.py $@
 
 runtime-build:
@@ -12,6 +12,9 @@ runtime-build:
 
 process-test-native:
 	python3 runtime.py test-native
+
+process-test-native-built:
+	python3 runtime.py test-native-built
 
 process-test-guest:
 	python3 runtime.py test-guest
@@ -73,3 +76,6 @@ read-benchmark:
 
 validate:
 	$(MAKE) process-test ram-demo persistent-demo recovery-test benchmark-build benchmark read-benchmark
+
+validate-built:
+	$(MAKE) check process-test-native-built process-test-guest pg-package storage-package storage-init sql-test storage-test recovery-test benchmark read-benchmark

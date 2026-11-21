@@ -1,7 +1,9 @@
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +13,95 @@ SPEC.loader.exec_module(runtime)
 
 
 class ResultTests(unittest.TestCase):
+    def test_build_preflight_skips_kvm_but_test_preflight_requires_it(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(runtime, "WORK", Path(temporary)), \
+                patch.object(runtime.os, "access", return_value=False), \
+                patch.object(runtime.shutil, "which", return_value="/usr/bin/tool"), \
+                patch.object(runtime.shutil, "disk_usage", return_value=SimpleNamespace(free=8 * 1024**3)), \
+                patch.object(runtime.Path, "read_text", return_value="MemAvailable: 4194304 kB\n"), \
+                patch.object(runtime, "run", return_value="tool 1\n") as run:
+            runtime.preflight(require_kvm=False)
+            self.assertFalse(any(call.args[0][0] == "sudo" for call in run.call_args_list))
+            run.reset_mock()
+            runtime.preflight()
+            checks = [call.args[0] for call in run.call_args_list if call.args[0][0] == "sudo"]
+            self.assertEqual(checks, [["sudo", "-n", "test", "-r", "/dev/kvm"],
+                                      ["sudo", "-n", "test", "-w", "/dev/kvm"]])
+
+    def test_process_profile_is_immutable_and_all_guest_artifacts_are_verified(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "kernel-build").mkdir()
+            (root / "upstream/kernel").mkdir(parents=True)
+            (root / "upstream/kernel/elfloader_hyperlight-x86_64").write_bytes(b"other-profile")
+            paths = {"kernel_sha256": root / "kernel-build/elfloader_hyperlight-x86_64",
+                     "cli_sha256": root / "hluk", "rootfs_sha256": root / "phase1.cpio"}
+            metadata = {"inputs": {}, "rust_build": runtime.RUST_BUILD}
+            for field, path in paths.items():
+                path.write_bytes(field.encode())
+                metadata[field] = runtime.digest(path)
+            metadata["embedded_kernel_sha256"] = metadata["kernel_sha256"]
+            (root / "build.json").write_text(json.dumps(metadata))
+            with patch.object(runtime, "WORK", root), patch.object(runtime, "UPSTREAM", root / "upstream"), \
+                    patch.object(runtime, "verify_upstream"), patch.object(runtime, "prepare_patches"), \
+                    patch.object(runtime, "build_inputs", return_value={}):
+                runtime.verify_process_artifacts(True)
+                for field, path in paths.items():
+                    original = path.read_bytes()
+                    path.write_bytes(b"changed")
+                    with self.subTest(field=field), self.assertRaisesRegex(RuntimeError, "Artifact changed"):
+                        runtime.verify_process_artifacts(True)
+                    path.write_bytes(original)
+                metadata["embedded_kernel_sha256"] = "different-kernel"
+                (root / "build.json").write_text(json.dumps(metadata))
+                with self.assertRaisesRegex(RuntimeError, "embedded kernel"):
+                    runtime.verify_process_artifacts(True)
+
+    def test_prebuilt_native_probe_never_compiles_and_rejects_modified_binary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "native-phase1"
+            binary.write_bytes(b"native-probe")
+            (root / "build.json").write_text(json.dumps(
+                {"inputs": {}, "rust_build": runtime.RUST_BUILD,
+                 "native_sha256": runtime.digest(binary)}))
+            with patch.object(runtime, "WORK", root), patch.object(runtime, "CASES", ("hello",)), \
+                    patch.object(runtime, "verify_upstream"), patch.object(runtime, "prepare_patches"), \
+                    patch.object(runtime, "build_inputs", return_value={}), \
+                    patch.object(runtime, "compile_executable") as compile, \
+                    patch.object(runtime.subprocess, "run",
+                                 return_value=SimpleNamespace(stdout="PASS hello\n", returncode=0)):
+                runtime.test(False, prebuilt=True)
+                compile.assert_not_called()
+                binary.write_bytes(b"modified")
+                with self.assertRaisesRegex(RuntimeError, "Native process artifact changed"):
+                    runtime.test(False, prebuilt=True)
+
+    def test_build_jobs_default_and_invalid_values(self):
+        with patch.dict(runtime.os.environ, {}, clear=True):
+            self.assertEqual(runtime.build_jobs(), 1)
+            for value in ("0", "-1", "two", ""):
+                with patch.dict(runtime.os.environ, {"HL_PG_BUILD_JOBS": value}):
+                    with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, "positive integer"):
+                        runtime.build_jobs()
+
+    def test_cargo_uses_selected_jobs_and_preserves_cache_wrapper(self):
+        with patch.dict(runtime.os.environ, {"HL_PG_BUILD_JOBS": "2", "CARGO_BUILD_JOBS": "8",
+                                            "RUSTC_WRAPPER": "sccache"}):
+            env = runtime.cargo_env()
+            self.assertEqual(env["CARGO_BUILD_JOBS"], "2")
+            self.assertEqual(env["RUSTC_WRAPPER"], "sccache")
+
+    def test_process_compiler_uses_cache_and_rejects_invalid_toggle(self):
+        with patch.dict(runtime.os.environ, {"HL_PG_USE_SCCACHE": "1"}), \
+                patch.object(runtime, "run") as run:
+            runtime.compile_executable(Path("/probe"))
+            self.assertEqual(run.call_args.args[0][:2], ["sccache", "musl-gcc"])
+        with patch.dict(runtime.os.environ, {"HL_PG_USE_SCCACHE": "yes"}):
+            with self.assertRaisesRegex(RuntimeError, "must be 0 or 1"):
+                runtime.compiler_args("gcc")
+
     def test_guest_kernel_identity_matches_host_and_invalidates_config(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -63,6 +154,7 @@ class ResultTests(unittest.TestCase):
     def test_cargo_build_settings_enforce_release_even_with_environment_overrides(self):
         with patch.dict(runtime.os.environ, {"CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",
                                             "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS": "true",
+                                            "HL_PG_BUILD_JOBS": "1",
                                             "CARGO_BUILD_JOBS": "8"}):
             env = runtime.cargo_env()
             self.assertEqual(runtime.RUST_BUILD["profile"], "release")

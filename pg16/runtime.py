@@ -25,8 +25,26 @@ RUST_BUILD = {"profile": "release", "opt_level": 3, "debug": 0, "debug_assertion
               "overflow_checks": False, "incremental": False}
 
 
+def build_jobs():
+    try:
+        jobs = int(os.environ.get("HL_PG_BUILD_JOBS", "1"))
+    except ValueError as error:
+        raise RuntimeError("HL_PG_BUILD_JOBS must be a positive integer") from error
+    if jobs < 1:
+        raise RuntimeError("HL_PG_BUILD_JOBS must be a positive integer")
+    return jobs
+
+
+def compiler_args(compiler):
+    enabled = os.environ.get("HL_PG_USE_SCCACHE", "0")
+    if enabled not in ("0", "1"):
+        raise RuntimeError("HL_PG_USE_SCCACHE must be 0 or 1")
+    return ["sccache", compiler] if enabled == "1" else [compiler]
+
+
 def cargo_env():
-    env = dict(os.environ, CARGO_BUILD_JOBS="1", CARGO_TARGET_DIR=str(WORK / "cargo"))
+    env = dict(os.environ, CARGO_BUILD_JOBS=str(build_jobs()),
+               CARGO_TARGET_DIR=str(WORK / "cargo"))
     env.update({f"CARGO_PROFILE_RELEASE_{key.upper()}": str(value).lower()
                 for key, value in RUST_BUILD.items() if key != "profile"})
     return env
@@ -56,6 +74,7 @@ def guest_identity():
 
 def build_inputs():
     paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
+             HERE / "rootfs/init.c",
              UPSTREAM / "defconfig-elfloader", UPSTREAM / "Cargo.lock"]
     for name in PATCH_TARGETS:
         paths.extend(patch_files(name))
@@ -69,17 +88,22 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def preflight():
+def preflight(*, require_kvm=True):
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise RuntimeError("The PostgreSQL sample requires Linux x86_64")
     identity = guest_identity()
     print(f"Guest identity: uid={identity['uid']} gid={identity['gid']}", flush=True)
+    jobs = build_jobs()
+    compiler = compiler_args("gcc")
+    print(f"Build jobs: {jobs}; C compiler: {' '.join(compiler)}", flush=True)
     required = ("git", "curl", "make", "gcc", "musl-gcc", "flex", "bison",
                 "m4", "cpio", "cargo", "rustc", "readelf", "timeout")
+    if compiler[0] == "sccache":
+        required += ("sccache",)
     missing = [tool for tool in required if not shutil.which(tool)]
     if missing:
         raise RuntimeError("Missing tools: " + ", ".join(missing))
-    if not (os.access("/dev/kvm", os.R_OK) and os.access("/dev/kvm", os.W_OK)):
+    if require_kvm and not (os.access("/dev/kvm", os.R_OK) and os.access("/dev/kvm", os.W_OK)):
         run(["sudo", "-n", "test", "-r", "/dev/kvm"])
         run(["sudo", "-n", "test", "-w", "/dev/kvm"])
     available_kib = int(next(line.split()[1] for line in
@@ -90,7 +114,8 @@ def preflight():
         raise RuntimeError("Need at least 2 GiB available RAM and 4 GiB free disk")
     metadata = {"platform": platform.platform(), "cpus": os.cpu_count(),
                 "available_ram_kib": available_kib, "free_disk_bytes": free_bytes,
-                "guest_identity": identity}
+                "guest_identity": identity, "build_jobs": jobs, "c_compiler": compiler,
+                "kvm_required": require_kvm}
     for tool in ("gcc", "musl-gcc", "cargo", "rustc", "flex", "bison"):
         metadata[tool] = run([tool, "--version"], capture=True).splitlines()[0]
     write_json(WORK / "preflight.json", metadata)
@@ -236,6 +261,8 @@ def kernel_config(overlay):
 
 
 def build(overlay=None, output=WORK):
+    jobs = build_jobs()
+    compiler = compiler_args("gcc")
     verify_upstream()
     prepare_patches()
     kernel = UPSTREAM / "kernel"
@@ -247,10 +274,13 @@ def build(overlay=None, output=WORK):
     if not (app / ".config").exists() or saved.get("inputs") != config_inputs or \
             saved.get("config_sha256") != digest(app / ".config"):
         (app / ".config").write_bytes(contents)
-    args = ["make", "-j1", "-C", kernel / "unikraft", f"A={app}",
-            f"L={kernel / 'libs/libelf'}", f"O={output / 'kernel-build'}",
-            "UK_CFLAGS=-std=gnu17 -march=x86-64"]
+    args = ["make", f"-j{jobs}", "-C", kernel / "unikraft", f"A={app}",
+            f"L={kernel / 'libs/libelf'}", f"O={output / 'kernel-build'}"]
+    if compiler[0] == "sccache":
+        args.extend([f"CC={' '.join(compiler)}", f"HOSTCC={' '.join(compiler)}"])
+    args.append("UK_CFLAGS=-std=gnu17 -march=x86-64")
     kernel_inputs = dict(config_inputs, cflags=args[-1],
+                         compiler_command=compiler,
                          compiler=run(["gcc", "--version"], capture=True).splitlines()[0])
     build_stamp = output / "kernel-build-inputs.json"
     run([*args, "olddefconfig"])
@@ -266,32 +296,40 @@ def build(overlay=None, output=WORK):
         shutil.copyfile(rebuilt, embedded)
     env = cargo_env()
     run(["cargo", "build", "--release", "--locked", "--bin", "hluk"], cwd=UPSTREAM, env=env)
-    cli = WORK / "cargo/release/hluk"
-    if overlay is not None:
-        shutil.copy2(cli, output / "hluk")
-        cli = output / "hluk"
-    compile_probe()
+    cli = output / "hluk"
+    shutil.copy2(WORK / "cargo/release/hluk", cli)
     metadata = {"sources": pins(), "submodules": verify_upstream(), "inputs": build_inputs(),
                 "kernel_sha256": digest(rebuilt), "embedded_kernel_sha256": digest(embedded),
                 "cli_sha256": digest(cli), "rust_build": RUST_BUILD,
-                "rootfs_sha256": digest(WORK / "phase1.cpio"),
                 "config_sha256": digest(app / ".config"),
-                "kernel_cflags": "-std=gnu17 -march=x86-64", "build_jobs": 1,
+                "kernel_cflags": "-std=gnu17 -march=x86-64", "build_jobs": jobs,
+                "compiler_command": compiler,
                 "lock_sha256": digest(UPSTREAM / "Cargo.lock"),
                 "musl_interpreter_sha256": digest("/lib/ld-musl-x86_64.so.1"),
                 "rustc": run(["rustc", "--version"], capture=True).strip(),
                 "compiler": run(["gcc", "--version"], capture=True).splitlines()[0],
                 "patches": config_inputs["patches"]}
     if overlay is not None:
+        compile_guest_executable(HERE / "rootfs/init.c", output / "pg-init")
         metadata["overlay_sha256"] = digest(overlay)
         metadata["guest_identity"] = config_inputs["guest_identity"]
+        metadata["init_sha256"] = digest(output / "pg-init")
+    else:
+        compile_probe()
+        metadata["rootfs_sha256"] = digest(WORK / "phase1.cpio")
+        metadata["native_sha256"] = digest(WORK / "native-phase1")
     write_json(output / ("kernel.json" if overlay is not None else "build.json"), metadata)
 
 
 def compile_executable(destination):
-    run(["musl-gcc", "-std=c11", "-O2", "-g", "-Wall", "-Wextra", "-Werror",
+    run([*compiler_args("musl-gcc"), "-std=c11", "-O2", "-g", "-Wall", "-Wextra", "-Werror",
          "-march=x86-64", "-fPIE", "-pie", "-pthread", HERE / "tests/process.c",
          "-o", destination])
+
+
+def compile_guest_executable(source, destination):
+    run([*compiler_args("musl-gcc"), "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+         "-march=x86-64", "-fPIE", "-pie", "-pthread", source, "-o", destination])
 
 
 def compile_probe():
@@ -308,6 +346,7 @@ def compile_probe():
         raise RuntimeError("Process probe must be a PIE executable")
     if "/lib/ld-musl-x86_64.so.1" not in elf:
         raise RuntimeError("Unexpected probe interpreter")
+    shutil.copy2(rootfs / "phase1", WORK / "native-phase1")
     shutil.copyfile(Path("/lib/ld-musl-x86_64.so.1").resolve(),
                     rootfs / "lib/ld-musl-x86_64.so.1")
     names = sorted(str(p.relative_to(rootfs)) for p in rootfs.rglob("*"))
@@ -325,27 +364,35 @@ def validate_result(case, output, returncode):
         raise RuntimeError(f"{case}: exit={returncode}; expected exactly one {expected!r}")
 
 
-def test(guest):
+def verify_process_artifacts(guest):
+    verify_upstream()
+    prepare_patches()
+    metadata = json.loads((WORK / "build.json").read_text())
+    if metadata["inputs"] != build_inputs():
+        raise RuntimeError("Build inputs changed; run make runtime-build before process tests")
+    if metadata.get("rust_build") != RUST_BUILD:
+        raise RuntimeError("Runtime must use the verified release build; run runtime-build")
     if guest:
-        verify_upstream()
-        prepare_patches()
-        metadata = json.loads((WORK / "build.json").read_text())
-        if metadata["inputs"] != build_inputs():
-            raise RuntimeError("Build inputs changed; run make runtime-build before guest tests")
-        if metadata.get("rust_build") != RUST_BUILD:
-            raise RuntimeError("Runtime must use the verified release build; run runtime-build")
+        if metadata["embedded_kernel_sha256"] != metadata["kernel_sha256"]:
+            raise RuntimeError("Runtime embedded kernel does not match its built kernel")
         for key, path in (("kernel_sha256", WORK / "kernel-build/elfloader_hyperlight-x86_64"),
-                          ("embedded_kernel_sha256", UPSTREAM / "kernel/elfloader_hyperlight-x86_64"),
-                          ("cli_sha256", WORK / "cargo/release/hluk"),
+                          ("cli_sha256", WORK / "hluk"),
                           ("rootfs_sha256", WORK / "phase1.cpio")):
             if digest(path) != metadata[key]:
                 raise RuntimeError(f"Artifact changed since build: {path}")
+    elif digest(WORK / "native-phase1") != metadata.get("native_sha256"):
+        raise RuntimeError("Native process artifact changed; run runtime-build")
+
+
+def test(guest, *, prebuilt=False):
+    if guest or prebuilt:
+        verify_process_artifacts(guest)
     else:
         compile_executable(WORK / "native-phase1")
     results = []
     for case in CASES:
         if guest:
-            args = [WORK / "cargo/release/hluk", "run", "--cold", "--scratch-mb", "512",
+            args = [WORK / "hluk", "run", "--cold", "--scratch-mb", "512",
                     "--initrd", WORK / "phase1.cpio", "--entry", "/phase1",
                     "--env", f"PHASE1_CASE={case}", "--env", "PHASE1_SHARED_VM=1"]
         else:
@@ -367,8 +414,8 @@ def test(guest):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("preflight", "fetch", "build",
-                                           "test-native", "test-guest"))
+    parser.add_argument("command", choices=("preflight", "build-preflight", "fetch", "build",
+                                           "test-native", "test-native-built", "test-guest"))
     command = parser.parse_args().command
     WORK.mkdir(parents=True, exist_ok=True)
     with (WORK / "phase1.lock").open("w") as lock:
@@ -377,7 +424,9 @@ def main():
         except BlockingIOError as error:
             raise RuntimeError("Another runtime command is running") from error
         if command.startswith("test-"):
-            test(command == "test-guest")
+            test(command == "test-guest", prebuilt=command == "test-native-built")
+        elif command == "build-preflight":
+            preflight(require_kvm=False)
         else:
             {"preflight": preflight, "fetch": fetch, "build": build}[command]()
 

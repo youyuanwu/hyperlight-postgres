@@ -74,8 +74,11 @@ def configure_args(guest):
     prefix = "/usr/local" if guest else str(NATIVE)
     cflags = "-O2 -std=gnu17 -march=x86-64"
     args = [source / "configure", f"--prefix={prefix}", *FLAGS, f"CFLAGS={cflags}"]
+    compiler = runtime.compiler_args("musl-gcc" if guest else "gcc")
+    if guest or compiler[0] == "sccache":
+        args.append(f"CC={' '.join(compiler)}")
     if guest:
-        args.extend(["CC=musl-gcc", "CPPFLAGS=-DEXEC_BACKEND -DHYPERLIGHT_UNIKRAFT",
+        args.extend(["CPPFLAGS=-DEXEC_BACKEND -DHYPERLIGHT_UNIKRAFT",
                      "--disable-rpath", "--disable-cassert", "--enable-depend"])
     return args
 
@@ -110,6 +113,7 @@ def build_settings(guest):
 
 
 def build_postgres(guest):
+    jobs = f"-j{runtime.build_jobs()}"
     directory = WORK / ("postgres-guest-build" if guest else "postgres-native-build")
     directory.mkdir(exist_ok=True)
     args = configure_args(guest)
@@ -123,20 +127,20 @@ def build_postgres(guest):
         actual = shlex.split(runtime.run([config, "--config"], capture=True))
         changed = stamp.exists() and json.loads(stamp.read_text()) != inputs
         if actual != expected or changed or (guest and not stamp.exists()):
-            runtime.run(["make", "-j1", "clean"], cwd=directory)
+            runtime.run(["make", jobs, "clean"], cwd=directory)
             runtime.run(args, cwd=directory)
     else:
         runtime.run(args, cwd=directory)
-    runtime.run(["make", "-j1", "-C", "src/backend", "generated-headers"], cwd=directory)
+    runtime.run(["make", jobs, "-C", "src/backend", "generated-headers"], cwd=directory)
     if guest:
         install = DATA / "guest-install"
         install.mkdir(exist_ok=True)
         for target in ("src/backend", "src/timezone", "src/pl/plpgsql"):
-            runtime.run(["make", "-j1", "-C", target, "all", "install",
+            runtime.run(["make", jobs, "-C", target, "all", "install",
                         f"DESTDIR={install}"], cwd=directory)
     else:
-        runtime.run(["make", "-j1"], cwd=directory)
-        runtime.run(["make", "-j1", "install"], cwd=directory)
+        runtime.run(["make", jobs], cwd=directory)
+        runtime.run(["make", jobs, "install"], cwd=directory)
     runtime.write_json(stamp, inputs)
 
 
@@ -184,8 +188,9 @@ def package():
     if kernel.get("guest_identity") != identity:
         raise RuntimeError("Guest kernel UID/GID changed; run pg-kernel before packaging")
     if kernel["kernel_sha256"] != runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64") or \
-            kernel["cli_sha256"] != runtime.digest(DATA / "hluk"):
-        raise RuntimeError("Guest kernel/CLI changed since its verified build")
+            kernel["cli_sha256"] != runtime.digest(DATA / "hluk") or \
+            kernel.get("init_sha256") != runtime.digest(DATA / "pg-init"):
+        raise RuntimeError("Guest kernel/CLI/init changed since its verified build")
     check_version(runtime.run([NATIVE / "bin/postgres", "--version"], capture=True))
     if ROOTFS.exists():
         if not (DATA / "build.json").exists():
@@ -209,9 +214,7 @@ def package():
         f"phase2:x:{identity['uid']}:{identity['gid']}:guest:/pgdata:/bin/false\n")
     (ROOTFS / "etc/group").write_text(f"phase2:x:{identity['gid']}:\n")
     (ROOTFS / "etc/ld-musl-x86_64.path").write_text("/lib:/usr/local/lib:/usr/local/lib/postgresql\n")
-    runtime.run(["musl-gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-                "-march=x86-64", "-fPIE", "-pie", "-pthread", HERE / "rootfs/init.c",
-                "-o", ROOTFS / "pg-init"])
+    shutil.copy2(DATA / "pg-init", ROOTFS / "pg-init")
     elf = runtime.run(["readelf", "-h", "-l", ROOTFS / "usr/local/bin/postgres"], capture=True)
     if "DYN (Position-Independent Executable file)" not in elf:
         raise RuntimeError("PostgreSQL guest must be PIE")

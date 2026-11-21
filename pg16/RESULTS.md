@@ -334,7 +334,8 @@ has a 30-second SQL deadline, client 90 seconds, and guest VM 120 seconds.
 
 ## Reproducibility and validation
 
-With initialized storage, build and run [the documented targets](README.md#performance):
+From the repository's `pg16/` directory, with initialized storage, build and
+run [the documented targets](README.md#performance):
 
 ```sh
 make pg-guest storage-build storage-package recovery-test

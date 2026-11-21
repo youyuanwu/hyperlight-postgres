@@ -11,12 +11,13 @@ SPEC.loader.exec_module(runtime)
 
 
 class ResultTests(unittest.TestCase):
-    def test_standalone_runtime_command_keeps_artifacts_in_its_repository(self):
+    def test_standalone_runtime_command_keeps_artifacts_in_its_sample_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = root / "workspace/hyperlight-postgres"
-            repository.mkdir(parents=True)
-            script = repository / "runtime.py"
+            sample = repository / "pg16"
+            sample.mkdir(parents=True)
+            script = sample / "runtime.py"
             shutil.copy2(runtime.__file__, script)
             spec = importlib.util.spec_from_file_location("standalone_runtime", script)
             standalone = importlib.util.module_from_spec(spec)
@@ -27,7 +28,8 @@ class ResultTests(unittest.TestCase):
                 standalone.main()
 
             preflight.assert_called_once_with()
-            self.assertTrue((repository / "target/postgres-experiment/phase1.lock").is_file())
+            self.assertTrue((sample / "target/postgres-experiment/phase1.lock").is_file())
+            self.assertFalse((repository / "target").exists())
             self.assertFalse((root / "target").exists())
 
     def test_cargo_build_settings_enforce_release_even_with_environment_overrides(self):

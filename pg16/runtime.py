@@ -86,14 +86,12 @@ def preflight():
     write_json(WORK / "preflight.json", metadata)
 
 
-def checkout(name, spec, sparse=None):
+def checkout(name, spec):
     path = WORK / "sources" / name
     if not path.exists():
         run(["git", "clone", "--no-checkout", "--filter=blob:none", "--depth", "1",
              spec["url"], path])
         run(["git", "fetch", "--depth", "1", "origin", spec["commit"]], cwd=path)
-        if sparse:
-            run(["git", "sparse-checkout", "set", "--no-cone", *sparse], cwd=path)
         run(["git", "checkout", "--detach", spec["commit"]], cwd=path)
     head = run(["git", "rev-parse", "HEAD"], cwd=path, capture=True).strip()
     if head != spec["commit"]:
@@ -187,8 +185,6 @@ def fetch():
     run(["git", "submodule", "update", "--init", "--depth", "1"],
         cwd=UPSTREAM)
     verify_upstream()
-    checkout("bsdkrun", spec["bsdkrun"],
-             ["/LICENSE", "/examples/unikraft-postgres/"])
     archive = source_dir / f"postgresql-{spec['postgres']['version']}.tar.bz2"
     if not archive.exists():
         temporary = archive.with_suffix(".download")
@@ -207,8 +203,7 @@ def fetch():
             raise RuntimeError("PostgreSQL COPYRIGHT missing")
         (WORK / "postgres-COPYRIGHT").write_bytes(member.read())
     for path in (UPSTREAM / "LICENSE", UPSTREAM / "kernel/unikraft/COPYING.md",
-                 UPSTREAM / "kernel/libs/libelf/COPYING.md",
-                 source_dir / "bsdkrun/LICENSE"):
+                 UPSTREAM / "kernel/libs/libelf/COPYING.md"):
         if not path.is_file():
             raise RuntimeError(f"License missing: {path}")
     prepare_patches()

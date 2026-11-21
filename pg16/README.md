@@ -315,8 +315,8 @@ file stops the next test rather than being silently cleared.
 
 ## Reproducible builds and bounds
 
-[sources.toml](sources.toml) pins PostgreSQL 16.15, Hyperlight-Unikraft, all kernel
-submodules, and the BSDkrun reference. Locally authored ordered patches preserve
+[sources.toml](sources.toml) pins PostgreSQL 16.15, Hyperlight-Unikraft, and all
+kernel submodules. Locally authored ordered patches preserve
 upstream notices and document their provenance:
 [PostgreSQL](patches/postgres/README.md),
 [Unikraft](patches/unikraft/README.md), and

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,20 @@ import tarfile
 import tomllib
 
 HERE = Path(__file__).resolve().parent
-WORK = HERE / "target/postgres-experiment"
+
+
+def version_directory():
+    major = os.environ.get("HL_PG_VERSION", "16")
+    if not re.fullmatch(r"[1-9][0-9]*", major):
+        raise RuntimeError("HL_PG_VERSION must be a PostgreSQL major version number")
+    directory = HERE.parent / f"pg{major}"
+    if not (directory / "sources.toml").is_file():
+        raise RuntimeError(f"Unsupported PostgreSQL version {major}: missing {directory / 'sources.toml'}")
+    return directory
+
+
+VERSION_DIR = version_directory()
+WORK = VERSION_DIR / "target/postgres-experiment"
 UPSTREAM = WORK / "sources/hyperlight-unikraft"
 CASES = ("hello", "spawn", "pipes", "signals", "blocked-signals", "setsid",
          "tls", "stack", "shared")
@@ -62,7 +76,11 @@ def digest(path):
 
 
 def pins():
-    return tomllib.loads((HERE / "sources.toml").read_text())
+    spec = tomllib.loads((VERSION_DIR / "sources.toml").read_text())
+    version = spec["postgres"]["version"]
+    if not re.fullmatch(rf"{VERSION_DIR.name[2:]}\.[0-9]+", version):
+        raise RuntimeError(f"PostgreSQL source version {version} does not match {VERSION_DIR.name}")
+    return spec
 
 
 def guest_identity():
@@ -73,12 +91,13 @@ def guest_identity():
 
 
 def build_inputs():
-    paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
+    paths = [VERSION_DIR / "sources.toml", VERSION_DIR / "Makefile",
+             HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
              HERE / "rootfs/init.c",
              UPSTREAM / "defconfig-elfloader", UPSTREAM / "Cargo.lock"]
     for name in PATCH_TARGETS:
         paths.extend(patch_files(name))
-        series = HERE / "patches" / name / "series"
+        series = patch_directory(name) / "series"
         if series.exists():
             paths.append(series)
     return {str(p): digest(p) for p in paths}
@@ -161,10 +180,16 @@ def verify_upstream():
     return actual
 
 
+def patch_directory(name):
+    return (VERSION_DIR if name == "postgres" else HERE) / "patches" / name
+
+
 def patch_files(name):
-    directory = HERE / "patches" / name
+    directory = patch_directory(name)
     series = directory / "series"
     if not series.exists():
+        if name == "postgres":
+            raise RuntimeError(f"Missing PostgreSQL patch series: {series}")
         return []
     files = []
     for line in series.read_text().splitlines():

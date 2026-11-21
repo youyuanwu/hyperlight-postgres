@@ -32,6 +32,7 @@ def client_inputs():
     return {str(path): runtime.digest(path) for path in (
         runtime.HERE / "tests/query-client.c",
         postgres.NATIVE / "include/libpq-fe.h",
+        postgres.NATIVE / "include/pg_config.h",
         (postgres.NATIVE / "lib/libpq.so").resolve(),
     )}
 

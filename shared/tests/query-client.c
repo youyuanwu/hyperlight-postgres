@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <libpq-fe.h>
+#include <pg_config.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -145,7 +146,7 @@ int main(int argc, char **argv)
     const char *one[] = {"1"};
     expect(first, 1, one);
     emit("first_query", "select", 0, elapsed);
-    const char *settings[] = {"on", "on", "fsync", "64kB", "0", "0", "2", "C", "C", "16.15"};
+    const char *settings[] = {"on", "on", "fsync", "64kB", "0", "0", "2", "C", "C", PG_VERSION};
     expect(query("SELECT current_setting('fsync'),current_setting('synchronous_commit'),"
                  "current_setting('wal_sync_method'),current_setting('work_mem'),"
                  "current_setting('max_parallel_workers'),current_setting('max_worker_processes'),"

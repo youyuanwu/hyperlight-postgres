@@ -64,6 +64,7 @@ def build():
                 cwd=runtime.UPSTREAM, env=env)
     runtime.write_json(DATA / "host.json", {
         "inputs": inputs(), "rust_build": runtime.RUST_BUILD,
+        "guest_identity": runtime.guest_identity(),
         "host_sha256": runtime.digest(DATA / "storage-host"),
         "kernel_sha256": runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64"),
     })
@@ -75,6 +76,9 @@ def package():
         raise RuntimeError("storage build inputs changed; run storage-build")
     if host.get("rust_build") != runtime.RUST_BUILD:
         raise RuntimeError("Storage host must use the verified release build; run storage-build")
+    identity = runtime.guest_identity()
+    if host.get("guest_identity") != identity:
+        raise RuntimeError("Storage host UID/GID changed; run storage-build")
     postgres.prepare_sources()
     postgres.verify_postgres_install(False)
     postgres.verify_postgres_install(True)
@@ -100,11 +104,13 @@ def package():
                     "-march=x86-64", "-fPIE", "-pie", "-pthread", source, "-o", ROOTFS / output])
     names = sorted(str(path.relative_to(ROOTFS)) for path in ROOTFS.rglob("*"))
     with (DATA / "postgres.cpio").open("wb") as archive:
-        subprocess.run(["cpio", "-o", "-H", "newc", "--reproducible", "--owner=1000:1000"],
+        subprocess.run(["cpio", "-o", "-H", "newc", "--reproducible",
+                        f"--owner={identity['uid']}:{identity['gid']}"],
                        cwd=ROOTFS, input=("\n".join(names) + "\n").encode(),
                        stdout=archive, check=True)
     runtime.write_json(DATA / "build.json", {
         "inputs": inputs(), "rust_build": host["rust_build"], "host_sha256": host["host_sha256"],
+        "guest_identity": identity,
         "kernel_sha256": host["kernel_sha256"],
         "rootfs_sha256": runtime.digest(DATA / "postgres.cpio"),
         "postgres_sha256": runtime.digest(ROOTFS / "usr/local/bin/postgres"),
@@ -179,6 +185,8 @@ def verify():
         raise RuntimeError("Storage build inputs changed; rebuild/repackage")
     if meta.get("rust_build") != runtime.RUST_BUILD:
         raise RuntimeError("Storage host must use the verified release build; rebuild/repackage")
+    if meta.get("guest_identity") != runtime.guest_identity():
+        raise RuntimeError("Storage guest UID/GID changed; rebuild/repackage")
     for field, path in (("host_sha256", DATA / "storage-host"),
                         ("kernel_sha256", DATA / "kernel-build/elfloader_hyperlight-x86_64"),
                         ("rootfs_sha256", DATA / "postgres.cpio"),

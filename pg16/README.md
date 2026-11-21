@@ -11,7 +11,7 @@ PostgreSQL.
 |-------------------------|-----------------|
 | Process model | All nine native and nine KVM process/signal/TLS/stack/shared-memory probes pass |
 | Real SQL server | Two authenticated concurrent backends, commits/rollbacks, session isolation, 24 reconnects |
-| Non-root execution | Guest uid/gid 1000; PostgreSQL's root and ownership checks remain intact |
+| Non-root execution | Guest matches the host user's uid/gid; PostgreSQL's root and ownership checks remain intact |
 | Persistent storage | `fsync=on`, `synchronous_commit=on`, observed OS file/directory and WAL barriers |
 | Storage semantics | Offsets, append/truncate, permissions, rename/reopen, explicit I/O/quota/read-only errors |
 | Directory handling | All 5,000 entries over bounded pages, including rewind |
@@ -28,6 +28,8 @@ transaction recoverable from the host page cache. See [limits](#limits).
 ## Build and run the persistent demo
 
 Use Linux x86_64 with KVM and run builds as an ordinary user.
+The guest kernel and packaged image use that user's UID/GID. Rebuild and
+repackage guest artifacts when changing host users; ownership checks remain enabled.
 Run all commands below from this repository's `pg16/` directory (`cd pg16`
 from the repository root). This project was originally
 the PostgreSQL sample in

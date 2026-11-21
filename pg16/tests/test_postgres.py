@@ -8,6 +8,15 @@ import postgres
 
 
 class PostgresTests(unittest.TestCase):
+    def test_guest_output_requires_the_packaged_non_default_uid(self):
+        output = ("PASS shared-creator-exit\nPASS guest-ownership\nPASS postmaster-shutdown\n"
+                  "PG_INIT postmaster=4 uid=1001\n"
+                  "PG_INIT rejected invalid shutdown identity\n")
+        postgres.validate_guest_output(output, 0, 1001)
+        for uid in (0, 1000, 10010):
+            with self.subTest(uid=uid), self.assertRaisesRegex(RuntimeError, "Non-root identity"):
+                postgres.validate_guest_output(output, 0, uid)
+
     def test_exact_postgres_version(self):
         postgres.check_version("postgres (PostgreSQL) 16.15\n")
         for value in ("postgres (PostgreSQL) 16.4", "16.15", ""):

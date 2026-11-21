@@ -99,6 +99,7 @@ Or select a capability:
 | Target | Purpose |
 |--------|---------|
 | `check` | Helper assertions, exact thresholds/output shapes, artifact guards, and command wiring |
+| `build-preflight` | Check architecture, non-root identity, tools, and build resources without requiring KVM |
 | `process-test` | Build and run all nine native and KVM runtime probes |
 | `ram-demo` | Build/package/run the RAM-backed server and concurrent SQL/session/reconnect checks |
 | `persistent-demo` | Rebuild/package the persistent host, verify managed configuration, run storage and SQL checks |
@@ -107,6 +108,7 @@ Or select a capability:
 | `benchmark-build` | Compile the bounded native libpq timing client |
 | `benchmark` | Three rotating native/guest repeats and a separate guest filesystem profile |
 | `read-benchmark` | Standard pgbench/psql full-table reads, with fresh-server/repeated scans and separate output verification |
+| `validate-built` | Package verified build artifacts, initialize fresh persistent storage, and run every suite without compiling; requires never-initialized storage |
 
 The RAM demo explicitly uses `fsync=off`: its database is a fresh RAM copy and
 SQL changes disappear on exit. It is not a fallback for persistent/recovery
@@ -325,7 +327,16 @@ upstream notices and document their provenance:
 [Hyperlight-Unikraft](patches/hyperlight-unikraft/README.md).
 No source fork or PostgreSQL submodule is required.
 
-Builds use one job and explicit GNU C17/baseline `-march=x86-64`. Input stamps
+Builds default to one job; `HL_PG_BUILD_JOBS` selects a positive build-job count
+(CI uses two). Tests remain serial. `HL_PG_USE_SCCACHE=1` wraps C compilers
+with sccache; `RUSTC_WRAPPER=sccache` enables Rust caching. CI caches compiler
+outputs through GitHub's cache backend, not databases, credentials, or validation results.
+CI builds PostgreSQL and Hyperlight independently, transfers allowlisted tar bundles
+with executable modes and symlinks intact, and runs `validate-built` in a third job.
+Runtime profiles and guest tools are immutable, hashed build outputs; all jobs
+use the same compiler settings and matching non-root UID/GID. Databases and
+credentials are created only in the assembly/test job, never transferred.
+Builds use explicit GNU C17/baseline `-march=x86-64`. Input stamps
 invalidate stale objects. Each CLI/host embeds its source-built kernel;
 building another runtime profile does not modify packaged RAM/persistent
 executables. Unexpected source edits or changed prepared patch

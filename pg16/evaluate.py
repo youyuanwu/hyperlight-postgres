@@ -38,7 +38,7 @@ def client_inputs():
 
 def build():
     postgres.verify_postgres_install(False)
-    runtime.run(["gcc", "-std=c11", "-O2", "-march=x86-64", "-Wall", "-Wextra", "-Werror",
+    runtime.run([*runtime.compiler_args("gcc"), "-std=c11", "-O2", "-march=x86-64", "-Wall", "-Wextra", "-Werror",
                 f"-I{postgres.NATIVE / 'include'}", runtime.HERE / "tests/query-client.c",
                 f"-L{postgres.NATIVE / 'lib'}", f"-Wl,-rpath,{postgres.NATIVE / 'lib'}",
                 "-lpq", "-o", CLIENT])

@@ -8,6 +8,14 @@ import postgres
 
 
 class PostgresTests(unittest.TestCase):
+    def test_configure_uses_cached_native_and_guest_compilers(self):
+        with patch.dict(postgres.runtime.os.environ, {"HL_PG_USE_SCCACHE": "1"}):
+            self.assertIn("CC=sccache gcc", postgres.configure_args(False))
+            self.assertIn("CC=sccache musl-gcc", postgres.configure_args(True))
+        with patch.dict(postgres.runtime.os.environ, {"HL_PG_USE_SCCACHE": "0"}):
+            self.assertNotIn("CC=gcc", postgres.configure_args(False))
+            self.assertIn("CC=musl-gcc", postgres.configure_args(True))
+
     def test_guest_output_requires_the_packaged_non_default_uid(self):
         output = ("PASS shared-creator-exit\nPASS guest-ownership\nPASS postmaster-shutdown\n"
                   "PG_INIT postmaster=4 uid=1001\n"
@@ -87,11 +95,13 @@ class PostgresTests(unittest.TestCase):
             (root / "phase2").mkdir()
             with patch.object(postgres, "WORK", root), patch.object(postgres, "DATA", root / "phase2"), \
                     patch.object(postgres, "postgres_inputs", return_value={"configure": []}), \
+                    patch.dict(postgres.runtime.os.environ, {"HL_PG_BUILD_JOBS": "2"}), \
                     patch.object(postgres.runtime, "run") as run:
                 postgres.build_postgres(True)
                 commands = [call.args[0] for call in run.call_args_list]
-                headers = ["make", "-j1", "-C", "src/backend", "generated-headers"]
+                headers = ["make", "-j2", "-C", "src/backend", "generated-headers"]
                 self.assertIn(headers, commands)
+                self.assertTrue(all("-j2" in args for args in commands if args[0] == "make"))
                 compilation = next(i for i, args in enumerate(commands) if "all" in args)
                 self.assertLess(commands.index(headers), compilation)
 

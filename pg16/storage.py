@@ -62,11 +62,14 @@ def build():
                 cwd=runtime.UPSTREAM, env=env)
     runtime.run(["cargo", "test", "--release", "--locked", "--example", "postgres_storage"],
                 cwd=runtime.UPSTREAM, env=env)
+    runtime.compile_guest_executable(HERE / "tests/storage.c", DATA / "storage-probe")
     runtime.write_json(DATA / "host.json", {
         "inputs": inputs(), "rust_build": runtime.RUST_BUILD,
         "guest_identity": runtime.guest_identity(),
         "host_sha256": runtime.digest(DATA / "storage-host"),
         "kernel_sha256": runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64"),
+        "init_sha256": runtime.digest(DATA / "pg-init"),
+        "probe_sha256": runtime.digest(DATA / "storage-probe"),
     })
 
 
@@ -79,6 +82,9 @@ def package():
     identity = runtime.guest_identity()
     if host.get("guest_identity") != identity:
         raise RuntimeError("Storage host UID/GID changed; run storage-build")
+    for field, path in (("init_sha256", DATA / "pg-init"), ("probe_sha256", DATA / "storage-probe")):
+        if host.get(field) != runtime.digest(path):
+            raise RuntimeError(f"Storage guest tool changed; run storage-build: {path}")
     postgres.prepare_sources()
     postgres.verify_postgres_install(False)
     postgres.verify_postgres_install(True)
@@ -99,9 +105,8 @@ def package():
     shutil.copy2(Path("/lib/ld-musl-x86_64.so.1").resolve(), ROOTFS / "lib/ld-musl-x86_64.so.1")
     (ROOTFS / "proc/self/maps").symlink_to("/dev/maps")
     (ROOTFS / "etc/ld-musl-x86_64.path").write_text("/lib:/usr/local/lib:/usr/local/lib/postgresql\n")
-    for source, output in ((HERE / "rootfs/init.c", "pg-init"), (HERE / "tests/storage.c", "storage-probe")):
-        runtime.run(["musl-gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-                    "-march=x86-64", "-fPIE", "-pie", "-pthread", source, "-o", ROOTFS / output])
+    shutil.copy2(DATA / "pg-init", ROOTFS / "pg-init")
+    shutil.copy2(DATA / "storage-probe", ROOTFS / "storage-probe")
     names = sorted(str(path.relative_to(ROOTFS)) for path in ROOTFS.rglob("*"))
     with (DATA / "postgres.cpio").open("wb") as archive:
         subprocess.run(["cpio", "-o", "-H", "newc", "--reproducible",

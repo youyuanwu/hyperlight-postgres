@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,25 @@ SPEC.loader.exec_module(runtime)
 
 
 class ResultTests(unittest.TestCase):
+    def test_standalone_runtime_command_keeps_artifacts_in_its_repository(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "workspace/hyperlight-postgres"
+            repository.mkdir(parents=True)
+            script = repository / "runtime.py"
+            shutil.copy2(runtime.__file__, script)
+            spec = importlib.util.spec_from_file_location("standalone_runtime", script)
+            standalone = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(standalone)
+
+            with patch.object(standalone, "preflight") as preflight, \
+                    patch.object(standalone.sys, "argv", [str(script), "preflight"]):
+                standalone.main()
+
+            preflight.assert_called_once_with()
+            self.assertTrue((repository / "target/postgres-experiment/phase1.lock").is_file())
+            self.assertFalse((root / "target").exists())
+
     def test_cargo_build_settings_enforce_release_even_with_environment_overrides(self):
         with patch.dict(runtime.os.environ, {"CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",
                                             "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS": "true",

@@ -15,7 +15,7 @@ import tarfile
 import tomllib
 
 HERE = Path(__file__).resolve().parent
-WORK = HERE.parents[1] / "target/postgres-experiment"
+WORK = HERE / "target/postgres-experiment"
 UPSTREAM = WORK / "sources/hyperlight-unikraft"
 CASES = ("hello", "spawn", "pipes", "signals", "blocked-signals", "setsid",
          "tls", "stack", "shared")

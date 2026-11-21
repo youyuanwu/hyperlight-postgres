@@ -28,12 +28,16 @@ transaction recoverable from the host page cache. See [limits](#limits).
 ## Build and run the persistent demo
 
 Use Linux x86_64 with KVM and run builds as an ordinary user.
+Run all commands below from this repository's root. This project was originally
+the PostgreSQL sample in
+[hyperlight-process](https://github.com/youyuanwu/hyperlight-process); its
+sample-specific Git history is preserved here.
 
 For a **new** sample data directory:
 
 ```sh
-make -C samples/postgres setup
-make -C samples/postgres persistent-demo
+make setup
+make persistent-demo
 ```
 
 `setup` checks resources, fetches verified sources, builds native PostgreSQL
@@ -42,7 +46,7 @@ initializes PGDATA once. It deliberately refuses to overwrite existing
 storage. If this sample was already initialized, skip `setup`:
 
 ```sh
-make -C samples/postgres persistent-demo
+make persistent-demo
 ```
 
 The demo boots a guest against its dedicated host directory, runs actual
@@ -84,7 +88,7 @@ changed.
 With initialized persistent storage, run all validation suites serially:
 
 ```sh
-make -C samples/postgres validate
+make validate
 ```
 
 Or select a capability:
@@ -108,14 +112,14 @@ validation, which always uses synchronization.
 Build/configuration targets are also available individually:
 
 ```sh
-make -C samples/postgres preflight fetch
-make -C samples/postgres runtime-build process-test-native process-test-guest
-make -C samples/postgres pg-kernel pg-native pg-guest pg-package sql-test
-make -C samples/postgres storage-build storage-package
+make preflight fetch
+make runtime-build process-test-native process-test-guest
+make pg-kernel pg-native pg-guest pg-package sql-test
+make storage-build storage-package
 # Only for never-initialized storage:
-make -C samples/postgres storage-init
+make storage-init
 # Update the managed persistent configuration while the server is stopped:
-make -C samples/postgres storage-config
+make storage-config
 ```
 
 Tests reject changed source/build/configuration hashes; rebuild the matching
@@ -213,10 +217,10 @@ To compare reading actual rows out of the native and guest databases:
 
 ```sh
 # After setup, or whenever the Makefile/build inputs have changed:
-make -C samples/postgres pg-guest storage-build storage-package recovery-test
-make -C samples/postgres check read-benchmark
+make pg-guest storage-build storage-package recovery-test
+make check read-benchmark
 # Repeat against the same verified builds:
-make -C samples/postgres read-benchmark
+make read-benchmark
 ```
 
 [read_benchmark.py](read_benchmark.py) reuses the same 100,000-row fixture,

@@ -337,8 +337,8 @@ has a 30-second SQL deadline, client 90 seconds, and guest VM 120 seconds.
 With initialized storage, build and run [the documented targets](README.md#performance):
 
 ```sh
-make -C samples/postgres pg-guest storage-build storage-package recovery-test
-make -C samples/postgres benchmark-build check benchmark read-benchmark
+make pg-guest storage-build storage-package recovery-test
+make benchmark-build check benchmark read-benchmark
 ```
 
 Successful current evidence is ignored under:

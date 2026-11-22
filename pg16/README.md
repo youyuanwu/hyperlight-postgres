@@ -193,6 +193,11 @@ Each must produce the expected PostgreSQL error, failed client exit, no
 `COMMIT` acknowledgement, and successful fault-free fresh-VM recovery.
 Write/quota test rows are absent afterward; the sync-error outcome is explicitly
 allowed to be unknown rather than misreported as rollback.
+After a WAL PANIC, PostgreSQL can remove DSM descriptors while reinitializing
+before the host is killed. These fault tests allow an empty descriptor directory
+but still validate any remaining generations and all recovery evidence.
+The controlled crash with active sessions separately requires stale descriptors,
+so stale-address cleanup coverage does not depend on PANIC timing.
 
 ### Performance
 

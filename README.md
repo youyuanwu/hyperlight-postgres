@@ -5,9 +5,9 @@ Each PostgreSQL major version has its own directory containing a source
 manifest, PostgreSQL patches, a small Makefile entry point, and documentation.
 Runtime patches, the Rust storage host, rootfs profiles, and tests are shared.
 
-Currently supported: [PostgreSQL 16](pg16/README.md). Its
+Supported versions: [PostgreSQL 16](pg16/README.md) and
+[PostgreSQL 17](pg17/README.md). The PG16
 [performance report](pg16/RESULTS.md) remains version-specific.
-PG17 is not supported yet; this layout prepares for its patch port and validation.
 
 Run from the repository root:
 
@@ -17,6 +17,9 @@ make PG=16 persistent-demo
 make PG=16 check
 ```
 
+For PostgreSQL 17, use `PG=17` (or `make -C pg17 <target>`).
+Run `setup` only for a never-initialized, version-local data directory.
+
 `PG` defaults to `16`; plain `make` runs helper tests. Existing commands such as
 `make -C pg16 check` and `cd pg16 && make persistent-demo` still work.
 For direct Python commands, select the major version with `HL_PG_VERSION`:
@@ -25,8 +28,18 @@ For direct Python commands, select the major version with `HL_PG_VERSION`:
 HL_PG_VERSION=16 python3 shared/runtime.py build-preflight
 ```
 
-Generated sources, builds, logs, credentials, and databases stay isolated under
-`pg<major>/target/postgres-experiment/`. The existing PG16 directory is unchanged.
+The Hyperlight-Unikraft checkout and its Unikraft/libelf/app-elfloader submodules
+are fetched once under `shared/target/sources/hyperlight-unikraft/`, reused by all
+local PG versions. Runtime patch stamps and an exclusive command lock live in
+`shared/target/`. The lock rejects concurrent commands across versions, protecting
+the shared kernel configuration, embedded kernel, and generated Rust example.
+All versions must use compatible runtime pins; a mismatch fails without
+replacing or resetting the checkout.
+
+PostgreSQL sources, builds, logs, credentials, and databases stay isolated under
+`pg<major>/target/postgres-experiment/`. Existing PG16 databases remain in place.
+Kernel outputs and Cargo build directories also remain version-local; sharing
+the source checkout does not deduplicate compilation or CI runner checkouts.
 Versions currently use the same loopback ports; run their demos/tests serially.
 Changed layout/script fingerprints require rebuilding and repackaging artifacts,
 but do not require deleting or reinitializing existing PG16 storage.
@@ -34,7 +47,7 @@ but do not require deleting or reinitializing existing PG16 storage.
 ## Adding a PostgreSQL version
 
 1. Add `pg<major>/sources.toml` with the PostgreSQL release URL/checksum and
-   compatible Hyperlight/Unikraft pins.
+   Hyperlight/Unikraft pins matching the shared checkout.
 2. Port the PostgreSQL patches into `pg<major>/patches/postgres/`, including
    an ordered `series` file. Shared runtime patches must match the selected pins.
 3. Add a Makefile exporting `HL_PG_VERSION := <major>` and including

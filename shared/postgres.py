@@ -569,7 +569,7 @@ def main():
     parser.add_argument("command", choices=("prepare", "kernel", "build-native", "build-guest", "package", "test"))
     command = parser.parse_args().command
     DATA.mkdir(parents=True, exist_ok=True)
-    with (WORK / "phase1.lock").open("w") as lock:
+    with runtime.upstream_lock(), (WORK / "phase1.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if command == "prepare":
             prepare_sources()

@@ -411,7 +411,7 @@ def main():
     parser.add_argument("command", choices=("build", "test"))
     command = parser.parse_args().command
     DATA.mkdir(parents=True, exist_ok=True)
-    with (runtime.WORK / "phase1.lock").open("w") as lock:
+    with runtime.upstream_lock(), (runtime.WORK / "phase1.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         {"build": build, "test": test}[command]()
 

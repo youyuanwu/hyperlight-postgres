@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16]
+        pg: [16, 17]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}
@@ -95,7 +95,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16]
+        pg: [16, 17]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}
@@ -125,7 +125,7 @@ jobs:
         run: make build-preflight fetch
 
       - name: Install upstream-pinned Rust toolchain
-        working-directory: pg${{ matrix.pg }}/target/postgres-experiment/sources/hyperlight-unikraft
+        working-directory: shared/target/sources/hyperlight-unikraft
         run: rustup toolchain install
 
       - name: Build runtime profiles and storage host
@@ -162,7 +162,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16]
+        pg: [16, 17]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}

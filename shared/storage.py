@@ -38,9 +38,15 @@ def ownership(path):
         os.close(fd)
 
 
+def crate_files():
+    return [HERE.parent / "Cargo.toml", HERE.parent / "Cargo.lock",
+            HERE.parent / "rust-toolchain.toml",
+            HERE / "storage-host/Cargo.toml", HERE / "storage-host/src/main.rs"]
+
+
 def inputs():
     paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "postgres.py", HERE / "storage.py",
-             HERE / "Makefile", HERE / "storage-host.rs",
+             HERE / "Makefile", *crate_files(),
              runtime.VERSION_DIR / "Makefile", runtime.VERSION_DIR / "sources.toml",
              HERE / "tests/storage.c", HERE / "rootfs/init.c", HERE / "rootfs/kernel.conf", PROFILE]
     for name in (*runtime.PATCH_TARGETS, "postgres"):
@@ -52,7 +58,7 @@ def inputs():
 
 
 def host_inputs():
-    paths = [HERE / "storage.py", HERE / "storage-host.rs",
+    paths = [HERE / "storage.py", *crate_files(),
              HERE / "tests/storage.c", HERE / "rootfs/kernel.conf"]
     return {"runtime": runtime.build_inputs(),
             "files": {str(path): runtime.digest(path) for path in paths}}
@@ -60,16 +66,16 @@ def host_inputs():
 
 def build():
     runtime.require_source_build()
+    runtime.verify_rust_dependencies(HERE.parent / "Cargo.lock")
     runtime.build(HERE / "rootfs/kernel.conf", DATA)
-    source = runtime.UPSTREAM / "examples/postgres_storage.rs"
-    shutil.copy2(HERE / "storage-host.rs", source)
     env = runtime.cargo_env()
-    runtime.run(["cargo", "build", "--release", "--locked", "--example", "postgres_storage"],
+    workspace = ["--manifest-path", HERE.parent / "Cargo.toml", "--package", "storage-host"]
+    runtime.run(["cargo", "build", "--release", "--locked", *workspace],
                cwd=runtime.UPSTREAM, env=env)
-    shutil.copy2(WORK / "cargo/release/examples/postgres_storage", DATA / "storage-host")
+    shutil.copy2(WORK / "cargo/release/storage-host", DATA / "storage-host")
     runtime.run(["cargo", "test", "--release", "--locked", "--lib", "hostfs::tests"],
                 cwd=runtime.UPSTREAM, env=env)
-    runtime.run(["cargo", "test", "--release", "--locked", "--example", "postgres_storage"],
+    runtime.run(["cargo", "test", "--release", "--locked", *workspace],
                 cwd=runtime.UPSTREAM, env=env)
     runtime.compile_guest_executable(HERE / "tests/storage.c", DATA / "storage-probe")
     runtime.write_json(DATA / "host.json", {

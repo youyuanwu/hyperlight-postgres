@@ -58,7 +58,8 @@ bundles for PG16/17/18/19 and one shared Hyperlight bundle.
 checkouts or compiler/cache tools, while retaining version, installed-file,
 runtime-binary, configuration, and UID/GID checks. It requires fresh persistent
 storage and refuses to overwrite a database. Normal local build/demo commands
-retain source verification. No additional Cargo manifest is required.
+retain source verification. The storage host uses the shared root
+[Cargo workspace](../README.md#rust-storage-host); no version-local manifest is required.
 Other versions' performance measurements are not PG18 results.
 
 ## Validation

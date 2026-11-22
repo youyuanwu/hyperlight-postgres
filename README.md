@@ -37,7 +37,7 @@ The Hyperlight-Unikraft checkout and its Unikraft/libelf/app-elfloader submodule
 are fetched once under `shared/target/sources/hyperlight-unikraft/`, reused by all
 local PG versions. Runtime patch stamps and an exclusive command lock live in
 `shared/target/`. The lock rejects concurrent commands across versions, protecting
-the shared kernel configuration, embedded kernel, and generated Rust example.
+the shared kernel configuration and embedded kernel.
 All versions use the shared runtime pins; a mismatched checkout fails without
 replacing or resetting the checkout.
 
@@ -80,6 +80,43 @@ Git checkouts, PostgreSQL source extraction, or compiler tools. This mode is for
 artifacts from trusted successful build jobs. Normal local build/demo targets
 retain source verification, and source preparation/compilation is refused when
 artifact-only mode is enabled.
+
+## Rust storage host
+
+The root [Cargo workspace](Cargo.toml) contains the shared
+[storage-host package](shared/storage-host/Cargo.toml). Its
+[Rust source](shared/storage-host/src/main.rs) is compiled directly as the
+`storage-host` binary, without copying an example into the upstream checkout.
+There are no per-PostgreSQL Cargo packages.
+Dependencies are declared in the workspace and inherited by the storage-host package.
+The root [rust-toolchain.toml](rust-toolchain.toml) pins Rust 1.99.1 with Clippy
+and rustfmt, matching the fetched upstream toolchain. Rustup selects this pin
+for workspace commands; system-packaged Cargo/rustc do not enforce toolchain files.
+
+The package uses the fetched, patched Hyperlight-Unikraft library as a path
+dependency. That checkout is excluded from the workspace and retains its own
+manifest and lockfile for the CLI and upstream hostfs tests. The committed root
+[Cargo.lock](Cargo.lock) preserves the upstream dependency versions; both
+lockfiles are checked against the Hyperlight dependency pins in
+[shared/sources.toml](shared/sources.toml).
+
+Use the existing Make entry point to prepare sources and the embedded guest
+kernel before compiling:
+
+```sh
+make PG=16 build-preflight fetch storage-build
+```
+
+The storage build invokes `cargo build` and `cargo test` with `--release`,
+`--locked`, and the workspace manifest. Cargo runs from the upstream checkout
+so rustup installations retain its toolchain selection. Build-job limits,
+release settings, version-local Cargo outputs, the packaged binary path, and
+the shared CI artifact remain unchanged. Workspace manifests, the lockfile,
+toolchain pin, and Rust source are included in storage artifact fingerprints; changing them
+requires rebuilding/repackaging, never reinitializing existing databases.
+
+Direct, mount-free Azure backend candidates and unresolved design choices are
+tracked in [Remote storage backend choices](docs/remote-storage.md).
 
 ## Adding a PostgreSQL version
 

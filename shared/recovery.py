@@ -278,7 +278,7 @@ class VM:
     def session(self, suffix="sql"):
         return postgres.Session(f"{self.name}-{suffix}", self.env, self.output)
 
-    def crash(self):
+    def crash(self, *, require_stale_dsm=True):
         self.done.set()
         self.monitor.join(timeout=2)
         os.kill(self.host_pid, signal.SIGKILL)
@@ -290,7 +290,8 @@ class VM:
             if not (storage.STORAGE / "pgdata/postmaster.pid").exists():
                 raise RuntimeError("owned-host crash did not leave the expected postmaster lockfile")
             stale = dsm_generations()
-            if not stale or set(stale.values()) != {self.identity}:
+            if (require_stale_dsm and not stale) or any(
+                    generation != self.identity for generation in stale.values()):
                 raise RuntimeError("crash did not preserve testable stale DSM descriptors")
         return {"host_exit": self.process.returncode, "stale_descriptors": len(stale),
                 "stale_generation": self.identity}
@@ -402,7 +403,8 @@ def fault_test(operation, env, expected, results):
                     and r["path"].startswith("pgdata/pg_wal/")]
         if len(injected) != 1 or FAULT.exists() or not failed.stderr.strip():
             raise RuntimeError(f"{operation} fault was not injected/consumed and reported exactly once")
-        crash = vm.crash()
+        # PostgreSQL may remove DSM descriptors while reinitializing after PANIC.
+        crash = vm.crash(require_stale_dsm=False)
     results[operation] = dict(vm.result, client_exit=failed.returncode,
                              commit_acknowledged=False, crash=crash)
     with VM(f"recover-{operation}", env) as recovered:

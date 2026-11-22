@@ -189,6 +189,15 @@ def checkout(name, spec):
     return path
 
 
+def verify_rust_dependencies(lockfile):
+    spec = runtime_sources()["hyperlight-unikraft"]
+    lock = tomllib.loads(lockfile.read_text())
+    for name, version in spec["dependencies"].items():
+        versions = [p["version"] for p in lock["package"] if p["name"] == name]
+        if versions != [version]:
+            raise RuntimeError(f"Unexpected locked {name} in {lockfile}: {versions}")
+
+
 def verify_upstream():
     spec = runtime_sources()["hyperlight-unikraft"]
     if run(["git", "rev-parse", "HEAD"], cwd=UPSTREAM, capture=True).strip() != spec["commit"]:
@@ -208,11 +217,7 @@ def verify_upstream():
     if run(["git", "ls-files", "--others", "--exclude-standard"],
            cwd=libelf, capture=True).strip():
         raise RuntimeError("Unexpected untracked files in pinned libelf")
-    lock = tomllib.loads((UPSTREAM / "Cargo.lock").read_text())
-    for name, version in spec["dependencies"].items():
-        versions = [p["version"] for p in lock["package"] if p["name"] == name]
-        if versions != [version]:
-            raise RuntimeError(f"Unexpected locked {name}: {versions}")
+    verify_rust_dependencies(UPSTREAM / "Cargo.lock")
     return actual
 
 

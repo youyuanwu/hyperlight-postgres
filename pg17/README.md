@@ -61,9 +61,18 @@ snapshots are not enabled or claimed. This is not a production PostgreSQL port
 or a power-loss durability certification.
 
 The [CI workflow](../.github/workflows/postgres.yml) builds both major versions
-with isolated PostgreSQL and Hyperlight artifact bundles, then runs
+with isolated PostgreSQL artifact bundles and one shared Hyperlight bundle, then runs
 `validate-built` without recompiling. That target requires never-initialized
 persistent storage and refuses to overwrite a database.
+The single Hyperlight builder verifies that all version manifests have identical
+runtime pins. Kernel and storage-host metadata exclude PostgreSQL-specific inputs;
+builders verify upstream pins/checksums/patches. Each assembly trusts those
+successful jobs, checks its PostgreSQL version and installed-file hashes, and
+validates runtime configuration/compiler settings, binary hashes, and UID/GID.
+`validate-built` enables `HL_PG_ARTIFACT_ONLY=1`; upstream checkouts, PostgreSQL
+source extraction, and compiler/cache tools are not needed in test jobs. Normal
+local builds keep source verification. Metadata is not rewritten to accommodate
+another version.
 PG16 performance measurements are not PG17 results.
 
 ## Validation
@@ -80,3 +89,15 @@ assembled from the exact CI tar allowlists, with compiler commands rejected
 except for `--version`. No compilation, automatic test retries, or relaxed
 ownership/version/resource checks were used during assembly validation.
 PG16 helper tests also passed and its existing data was left untouched.
+
+The shared CI runtime bundle was subsequently validated with the complete
+`validate-built` suite for both PG16 and PG17, still with compilation blocked.
+Both consumed identical runtime binaries and metadata without modification;
+each passed all 72 read scans and independent output checks. The original
+version-local databases were restored after testing.
+
+Source-free artifact validation also passed for both versions from empty
+version-local targets, with the upstream checkout unavailable and Git, curl,
+compiler, and compiler-cache commands blocked. Each complete suite passed,
+including all 72 read scans. Normal source-verifying packaging passed again
+after restoring the original checkouts and databases.

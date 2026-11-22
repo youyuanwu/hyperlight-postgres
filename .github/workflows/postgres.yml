@@ -70,10 +70,8 @@ jobs:
             -C target/postgres-experiment \
             native-pg \
             postgres-native-build/experiment-inputs.json \
-            postgres-native-build/src/backend/postgres \
             postgres-native-build/src/include/pg_config.h \
             postgres-guest-build/experiment-inputs.json \
-            postgres-guest-build/src/backend/postgres \
             postgres-guest-build/src/include/pg_config.h \
             phase2/guest-install phase5/query-client phase5/build.json
 
@@ -92,15 +90,11 @@ jobs:
 
   hyperlight-build:
     runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        pg: [16, 17]
     defaults:
       run:
-        working-directory: pg${{ matrix.pg }}
+        working-directory: pg16
     env:
-      HL_PG_VERSION: ${{ matrix.pg }}
+      HL_PG_VERSION: "16"
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -121,8 +115,8 @@ jobs:
             binutils bison build-essential cpio curl flex git m4 \
             musl-tools python3 util-linux
 
-      - name: Check build prerequisites and fetch pinned sources
-        run: make build-preflight fetch
+      - name: Check shared runtime compatibility and fetch pinned sources
+        run: make build-preflight check-runtime-pins fetch
 
       - name: Install upstream-pinned Rust toolchain
         working-directory: shared/target/sources/hyperlight-unikraft
@@ -133,7 +127,7 @@ jobs:
 
       - name: Bundle verified Hyperlight artifacts
         run: |
-          tar -czf "$GITHUB_WORKSPACE/pg${{ matrix.pg }}/target/hyperlight-build.tar.gz" \
+          tar -czf "$GITHUB_WORKSPACE/shared/target/hyperlight-build.tar.gz" \
             -C target/postgres-experiment \
             build.json hluk native-phase1 phase1.cpio \
             kernel-build/elfloader_hyperlight-x86_64 \
@@ -146,8 +140,8 @@ jobs:
       - name: Upload Hyperlight artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: pg${{ matrix.pg }}-hyperlight-build
-          path: pg${{ matrix.pg }}/target/hyperlight-build.tar.gz
+          name: hyperlight-build
+          path: shared/target/hyperlight-build.tar.gz
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
@@ -168,6 +162,7 @@ jobs:
         working-directory: pg${{ matrix.pg }}
     env:
       HL_PG_VERSION: ${{ matrix.pg }}
+      HL_PG_ARTIFACT_ONLY: "1"
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -175,23 +170,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up compiler cache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: v0.19.0
-
       - name: Install test and packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            binutils bison build-essential cpio curl flex git m4 \
-            musl-tools python3 util-linux
+            binutils cpio musl python3 util-linux
 
-      - name: Check KVM prerequisites and prepare verified sources
-        run: |
-          make preflight fetch
-          python3 ../shared/postgres.py prepare
+      - name: Check KVM and artifact validation prerequisites
+        run: make preflight
 
       - name: Download PostgreSQL artifacts
         uses: actions/download-artifact@v8.0.2
@@ -202,7 +188,7 @@ jobs:
       - name: Download Hyperlight artifacts
         uses: actions/download-artifact@v8.0.2
         with:
-          name: pg${{ matrix.pg }}-hyperlight-build
+          name: hyperlight-build
           path: pg${{ matrix.pg }}/target/artifacts
 
       - name: Restore executable artifacts and symlinks
@@ -214,10 +200,6 @@ jobs:
 
       - name: Assemble images and run all tests without rebuilding
         run: make validate-built
-
-      - name: Report compiler cache statistics
-        if: always() && steps.sccache.outcome == 'success'
-        run: sccache --show-stats
 
       - name: Upload failure diagnostics
         if: failure()

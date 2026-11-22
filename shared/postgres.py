@@ -34,6 +34,7 @@ FLAGS = ["--without-icu", "--without-readline", "--without-zlib",
 
 
 def prepare_sources():
+    runtime.require_source_build()
     spec = runtime.pins()["postgres"]
     archive = WORK / "sources" / f"postgresql-{spec['version']}.tar.bz2"
     if runtime.digest(archive) != spec["sha256"]:
@@ -92,17 +93,38 @@ def postgres_inputs(guest):
                           for p in runtime.patch_files("postgres")] if guest else []}
 
 
+def installed_hashes(guest):
+    directory = DATA / "guest-install/usr/local" if guest else NATIVE
+    if not (directory / "bin/postgres").is_file():
+        raise RuntimeError(f"Missing installed PostgreSQL server: {directory / 'bin/postgres'}")
+    return {str(path.relative_to(directory)): runtime.digest(path)
+            for path in sorted(directory.rglob("*")) if path.is_file()}
+
+
 def verify_postgres_install(guest):
     directory = WORK / ("postgres-guest-build" if guest else "postgres-native-build")
     stamp = directory / "experiment-inputs.json"
-    if json.loads(stamp.read_text()) != postgres_inputs(guest):
-        raise RuntimeError("PostgreSQL build inputs changed; rebuild before packaging")
-    installed = (DATA / "guest-install/usr/local/bin/postgres") if guest else NATIVE / "bin/postgres"
-    if runtime.digest(directory / "src/backend/postgres") != runtime.digest(installed):
-        raise RuntimeError("Installed PostgreSQL does not match the verified build")
+    metadata = json.loads(stamp.read_text())
+    if runtime.artifact_only():
+        if metadata["configure"] != list(map(str, configure_args(guest)[1:])):
+            raise RuntimeError("PostgreSQL compiler/configure settings do not match the artifact build")
+    else:
+        if any(metadata.get(key) != value for key, value in postgres_inputs(guest).items()):
+            raise RuntimeError("PostgreSQL build inputs changed; rebuild before packaging")
     config = (directory / "src/include/pg_config.h").read_text()
     if re.search(r"^\s*#\s*define\s+USE_ASSERT_CHECKING\b", config, re.MULTILINE):
         raise RuntimeError("Comparison PostgreSQL builds must have assertions disabled")
+    if metadata.get("version") != runtime.pins()["postgres"]["version"]:
+        raise RuntimeError("PostgreSQL artifact version does not match the selected version")
+    if metadata.get("pg_config_sha256") != runtime.digest(directory / "src/include/pg_config.h"):
+        raise RuntimeError("PostgreSQL configuration header does not match the verified build")
+    if metadata.get("installed_sha256") != installed_hashes(guest):
+        raise RuntimeError("Installed PostgreSQL files do not match the verified build")
+    installed = (DATA / "guest-install/usr/local/bin/postgres") if guest else NATIVE / "bin/postgres"
+    if not runtime.artifact_only() and \
+            runtime.digest(directory / "src/backend/postgres") != runtime.digest(installed):
+        raise RuntimeError("Installed PostgreSQL does not match the verified build")
+    return metadata
 
 
 def build_settings(guest):
@@ -113,6 +135,7 @@ def build_settings(guest):
 
 
 def build_postgres(guest):
+    runtime.require_source_build()
     jobs = f"-j{runtime.build_jobs()}"
     directory = WORK / ("postgres-guest-build" if guest else "postgres-native-build")
     directory.mkdir(exist_ok=True)
@@ -125,7 +148,8 @@ def build_postgres(guest):
     if config.exists():
         import shlex
         actual = shlex.split(runtime.run([config, "--config"], capture=True))
-        changed = stamp.exists() and json.loads(stamp.read_text()) != inputs
+        previous = json.loads(stamp.read_text()) if stamp.exists() else {}
+        changed = stamp.exists() and any(previous.get(key) != value for key, value in inputs.items())
         if actual != expected or changed or (guest and not stamp.exists()):
             runtime.run(["make", jobs, "clean"], cwd=directory)
             runtime.run(args, cwd=directory)
@@ -141,7 +165,9 @@ def build_postgres(guest):
     else:
         runtime.run(["make", jobs], cwd=directory)
         runtime.run(["make", jobs, "install"], cwd=directory)
-    runtime.write_json(stamp, inputs)
+    runtime.write_json(stamp, dict(inputs, version=runtime.pins()["postgres"]["version"],
+                                  pg_config_sha256=runtime.digest(directory / "src/include/pg_config.h"),
+                                  installed_sha256=installed_hashes(guest)))
 
 
 def bytes_in(path):
@@ -176,18 +202,12 @@ def check_version(output):
 
 def package():
     identity = runtime.guest_identity()
-    prepare_sources()
-    verify_postgres_install(False)
-    verify_postgres_install(True)
+    if not runtime.artifact_only():
+        prepare_sources()
+    native_build = verify_postgres_install(False)
+    guest_build = verify_postgres_install(True)
     kernel = json.loads((DATA / "kernel.json").read_text())
-    patches = {name: [{"name": p.name, "sha256": runtime.digest(p)}
-                      for p in runtime.patch_files(name)] for name in runtime.PATCH_TARGETS}
-    if kernel["inputs"] != runtime.build_inputs() or \
-            kernel["overlay_sha256"] != runtime.digest(HERE / "rootfs/kernel.conf") or \
-            kernel["patches"] != patches:
-        raise RuntimeError("Guest kernel inputs changed; run pg-kernel before packaging")
-    if kernel.get("guest_identity") != identity:
-        raise RuntimeError("Guest kernel UID/GID changed; run pg-kernel before packaging")
+    runtime.verify_kernel_metadata(kernel)
     if kernel["kernel_sha256"] != runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64") or \
             kernel["cli_sha256"] != runtime.digest(DATA / "hluk") or \
             kernel.get("init_sha256") != runtime.digest(DATA / "pg-init"):
@@ -254,8 +274,8 @@ def package():
         "guest_uid": identity["uid"],
         "guest_gid": identity["gid"],
         "kernel": json.loads((DATA / "kernel.json").read_text()),
-        "postgres_guest_build": postgres_inputs(True),
-        "postgres_native_build": postgres_inputs(False),
+        "postgres_guest_build": {key: guest_build[key] for key in ("configure", "source_tree", "patches")},
+        "postgres_native_build": {key: native_build[key] for key in ("configure", "source_tree", "patches")},
         "native_initdb_sha256": runtime.digest(NATIVE / "bin/initdb"),
         "native_psql_sha256": runtime.digest(NATIVE / "bin/psql"),
         "postgres_sha256": runtime.digest(ROOTFS / "usr/local/bin/postgres"),
@@ -415,9 +435,10 @@ def validate_guest_output(output, code, uid):
 
 
 def test():
-    runtime.verify_upstream()
-    runtime.prepare_patches()
-    prepare_sources()
+    if not runtime.artifact_only():
+        runtime.verify_upstream()
+        runtime.prepare_patches()
+        prepare_sources()
     metadata = json.loads((DATA / "build.json").read_text())
     if metadata["inputs"] != inputs():
         raise RuntimeError("RAM-backed guest inputs changed; rebuild/repackage before SQL tests")

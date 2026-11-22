@@ -1,12 +1,12 @@
 .NOTPARALLEL:
-.PHONY: setup preflight build-preflight fetch runtime-build process-test-native process-test-native-built process-test-guest process-test check pg-kernel pg-native pg-guest pg-package sql-test ram-demo storage-build storage-package storage-init storage-config storage-test persistent-demo recovery-test benchmark-build benchmark read-benchmark validate validate-built
+.PHONY: setup preflight build-preflight check-runtime-pins fetch runtime-build process-test-native process-test-native-built process-test-guest process-test check pg-kernel pg-native pg-guest pg-package sql-test ram-demo storage-build storage-package storage-init storage-config storage-test persistent-demo recovery-test benchmark-build benchmark read-benchmark validate validate-built
 
 SHARED_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 setup:
 	$(MAKE) preflight fetch pg-native pg-guest storage-build storage-package storage-init check
 
-preflight build-preflight fetch:
+preflight build-preflight check-runtime-pins fetch:
 	python3 "$(SHARED_DIR)/runtime.py" $@
 
 runtime-build:
@@ -22,7 +22,7 @@ process-test-guest:
 	python3 "$(SHARED_DIR)/runtime.py" test-guest
 
 check:
-	cd "$(SHARED_DIR)" && python3 -m unittest discover -s tests -p 'test_*.py'
+	cd "$(SHARED_DIR)" && HL_PG_ARTIFACT_ONLY=0 python3 -m unittest discover -s tests -p 'test_*.py'
 
 process-test:
 	$(MAKE) preflight fetch runtime-build check process-test-native process-test-guest
@@ -79,5 +79,6 @@ read-benchmark:
 validate:
 	$(MAKE) process-test ram-demo persistent-demo recovery-test benchmark-build benchmark read-benchmark
 
+validate-built: export HL_PG_ARTIFACT_ONLY := 1
 validate-built:
 	$(MAKE) check process-test-native-built process-test-guest pg-package storage-package storage-init sql-test storage-test recovery-test benchmark read-benchmark

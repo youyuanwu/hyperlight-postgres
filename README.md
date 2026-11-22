@@ -5,8 +5,8 @@ Each PostgreSQL major version has its own directory containing a source
 manifest, PostgreSQL patches, a small Makefile entry point, and documentation.
 Runtime patches, the Rust storage host, rootfs profiles, and tests are shared.
 
-Supported versions: [PostgreSQL 16](pg16/README.md) and
-[PostgreSQL 17](pg17/README.md). The PG16
+Supported versions: [PostgreSQL 16](pg16/README.md),
+[PostgreSQL 17](pg17/README.md), and [PostgreSQL 18](pg18/README.md). The PG16
 [performance report](pg16/RESULTS.md) remains version-specific.
 
 Run from the repository root:
@@ -17,7 +17,8 @@ make PG=16 persistent-demo
 make PG=16 check
 ```
 
-For PostgreSQL 17, use `PG=17` (or `make -C pg17 <target>`).
+For PostgreSQL 17 or 18, use `PG=17`/`PG=18` (or `make -C pg17 <target>`/
+`make -C pg18 <target>`).
 Run `setup` only for a never-initialized, version-local data directory.
 
 `PG` defaults to `16`; plain `make` runs helper tests. Existing commands such as
@@ -40,7 +41,7 @@ PostgreSQL sources, builds, logs, credentials, and databases stay isolated under
 `pg<major>/target/postgres-experiment/`. Existing PG16 databases remain in place.
 Kernel outputs and Cargo build directories also remain version-local; sharing
 the local source checkout does not itself deduplicate compilation.
-CI builds Hyperlight once and supplies the same verified runtime bundle to both
+CI builds Hyperlight once and supplies the same verified runtime bundle to all
 PostgreSQL assembly/test jobs. Runtime metadata contains only shared source,
 configuration, compiler, and runtime pin identities; package metadata separately
 checks each PostgreSQL version, patch stack, and installed server.
@@ -51,6 +52,9 @@ and check installed-file/binary hashes, configuration, release settings, version
 and host UID/GID without rewriting runtime metadata or fetching upstream sources.
 The process, RAM SQL, and persistent runtime profiles remain separate outputs.
 Versions currently use the same loopback ports; run their demos/tests serially.
+PG18 explicitly uses synchronous I/O in both guest profiles and the matching
+native baseline; worker-based AIO and io_uring are outside the supported profile.
+Its fresh databases retain PG18's default enabled data checksums.
 Changed layout/script fingerprints require rebuilding and repackaging artifacts,
 but do not require deleting or reinitializing existing PG16 storage.
 

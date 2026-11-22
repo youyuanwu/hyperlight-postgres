@@ -153,6 +153,11 @@ int main(int argc, char **argv)
                  "current_setting('max_connections'),datcollate,datctype,"
                  "current_setting('server_version') FROM pg_database "
                  "WHERE datname=current_database();"), 10, settings);
+#if PG_VERSION_NUM >= 180000
+    const char *version_settings[] = {"sync", "on"};
+    expect(query("SELECT current_setting('io_method'),current_setting('data_checksums');"),
+           2, version_settings);
+#endif
     PQclear(query("SET statement_timeout='10s';"));
     int profiled = strcmp(argv[4], "profile") == 0;
     unsigned warmup = profiled ? 10 : 50;

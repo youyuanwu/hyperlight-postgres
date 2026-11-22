@@ -200,6 +200,19 @@ def check_version(output):
         raise RuntimeError(f"Unexpected native PostgreSQL version: {output.strip()}")
 
 
+def ram_profile():
+    profile = PROFILE.read_text()
+    if int(runtime.pins()["postgres"]["version"].split(".")[0]) >= 18:
+        profile += "\nio_method = sync\n"
+    return profile
+
+
+def verify_version_settings(session):
+    if int(runtime.pins()["postgres"]["version"].split(".")[0]) >= 18:
+        expect(session, "SELECT current_setting('io_method'),current_setting('data_checksums');",
+               ["sync|on"])
+
+
 def package():
     identity = runtime.guest_identity()
     if not runtime.artifact_only():
@@ -249,7 +262,7 @@ def package():
                 "--locale=C", "--auth-local=reject", "--auth-host=scram-sha-256",
                 f"--pwfile={password}", "--no-sync"])
     with (ROOTFS / "pgdata/postgresql.conf").open("a") as config:
-        config.write("\n" + PROFILE.read_text())
+        config.write("\n" + ram_profile())
     (ROOTFS / "pgdata/pg_hba.conf").write_text(
         "host all all 127.0.0.1/32 scram-sha-256\n"
         "host all all 0.0.0.0/0 reject\n"
@@ -520,6 +533,7 @@ def test():
                 if not {"checkpointer", "background writer", "walwriter"} <= workers:
                     raise RuntimeError(f"Required auxiliary processes missing: {workers}")
                 result["auxiliary_processes"] = sorted(workers - {"client backend"})
+                verify_version_settings(a)
                 expect(a, "SHOW fsync;", ["off"])
                 major, minor = map(int, runtime.pins()["postgres"]["version"].split("."))
                 expect(a, "SHOW server_version_num;", [str(major * 10000 + minor)])

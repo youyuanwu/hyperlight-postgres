@@ -193,6 +193,7 @@ def profile_rows(path):
 
 
 def prepare(session, run_dir, name):
+    postgres.verify_version_settings(session)
     session.execute(recovery.FIXTURE + "CREATE UNIQUE INDEX ON spill_fixture(id);"
                     "DROP TABLE IF EXISTS eval_commits;"
                     "CREATE TABLE eval_commits(id int primary key,counter bigint NOT NULL);"

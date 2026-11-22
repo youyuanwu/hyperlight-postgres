@@ -1,0 +1,82 @@
+name: Build PostgreSQL artifacts
+
+on:
+  workflow_call:
+    inputs:
+      pg:
+        description: PostgreSQL major version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HL_PG_BUILD_JOBS: "2"
+  HL_PG_USE_SCCACHE: "1"
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+
+jobs:
+  postgres-build:
+    runs-on: ubuntu-26.04
+    defaults:
+      run:
+        working-directory: pg${{ inputs.pg }}
+    env:
+      HL_PG_VERSION: ${{ inputs.pg }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up compiler cache
+        id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.19.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            binutils bison build-essential cpio curl flex git m4 \
+            musl-tools python3 util-linux
+
+      - name: Check build prerequisites and fetch pinned sources
+        run: make build-preflight fetch
+
+      - name: Build native and guest PostgreSQL and benchmark client
+        run: make pg-native pg-guest benchmark-build
+
+      - name: Bundle verified PostgreSQL artifacts
+        run: |
+          tar -czf "$GITHUB_WORKSPACE/pg${{ inputs.pg }}/target/postgres-build.tar.gz" \
+            -C target/postgres-experiment \
+            native-pg \
+            postgres-native-build/experiment-inputs.json \
+            postgres-native-build/src/include/pg_config.h \
+            postgres-guest-build/experiment-inputs.json \
+            postgres-guest-build/src/include/pg_config.h \
+            phase2/guest-install phase5/query-client phase5/build.json
+
+      - name: Upload PostgreSQL artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg${{ inputs.pg }}-postgres-build
+          path: pg${{ inputs.pg }}/target/postgres-build.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Report compiler cache statistics
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats

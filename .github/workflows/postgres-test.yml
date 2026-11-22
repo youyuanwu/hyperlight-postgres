@@ -1,0 +1,92 @@
+name: Assemble and test PostgreSQL artifacts
+
+on:
+  workflow_call:
+    inputs:
+      pg:
+        description: PostgreSQL major version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HL_PG_BUILD_JOBS: "2"
+  HL_PG_USE_SCCACHE: "1"
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+
+jobs:
+  assemble-and-test:
+    runs-on: ubuntu-26.04
+    defaults:
+      run:
+        working-directory: pg${{ inputs.pg }}
+    env:
+      HL_PG_VERSION: ${{ inputs.pg }}
+      HL_PG_ARTIFACT_ONLY: "1"
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Reserve sample server ports from ephemeral allocation
+        run: |
+          reserved_ports=$(sysctl -n net.ipv4.ip_local_reserved_ports)
+          sudo -A sysctl -w "net.ipv4.ip_local_reserved_ports=${reserved_ports:+$reserved_ports,}55432-55434"
+
+      - name: Install test and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            binutils cpio musl python3 util-linux
+
+      - name: Check KVM and artifact validation prerequisites
+        run: make preflight
+
+      - name: Download PostgreSQL artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: pg${{ inputs.pg }}-postgres-build
+          path: pg${{ inputs.pg }}/target/artifacts
+
+      - name: Download Hyperlight artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: hyperlight-build
+          path: pg${{ inputs.pg }}/target/artifacts
+
+      - name: Restore executable artifacts and symlinks
+        run: |
+          tar -xzf target/artifacts/postgres-build.tar.gz \
+            -C target/postgres-experiment --same-permissions --no-same-owner
+          tar -xzf target/artifacts/hyperlight-build.tar.gz \
+            -C target/postgres-experiment --same-permissions --no-same-owner
+
+      - name: Assemble images and run all tests without rebuilding
+        run: make validate-built
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg${{ inputs.pg }}-failure-diagnostics
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            pg${{ inputs.pg }}/target/postgres-experiment/*.log
+            pg${{ inputs.pg }}/target/postgres-experiment/*-results.json
+            pg${{ inputs.pg }}/target/postgres-experiment/preflight.json
+            pg${{ inputs.pg }}/target/postgres-experiment/phase*/**/*.log
+            pg${{ inputs.pg }}/target/postgres-experiment/phase*/**/results.json
+            pg${{ inputs.pg }}/target/postgres-experiment/read-benchmark/**/*.log
+            pg${{ inputs.pg }}/target/postgres-experiment/read-benchmark/**/results.json

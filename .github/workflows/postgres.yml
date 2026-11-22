@@ -27,66 +27,25 @@ env:
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
-  postgres-build:
-    runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        pg: [16, 17, 18, 19]
-    defaults:
-      run:
-        working-directory: pg${{ matrix.pg }}
-    env:
-      HL_PG_VERSION: ${{ matrix.pg }}
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
+  postgres-build-16:
+    uses: ./.github/workflows/postgres-build.yml
+    with:
+      pg: "16"
 
-      - name: Set up compiler cache
-        id: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: v0.19.0
+  postgres-build-17:
+    uses: ./.github/workflows/postgres-build.yml
+    with:
+      pg: "17"
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            binutils bison build-essential cpio curl flex git m4 \
-            musl-tools python3 util-linux
+  postgres-build-18:
+    uses: ./.github/workflows/postgres-build.yml
+    with:
+      pg: "18"
 
-      - name: Check build prerequisites and fetch pinned sources
-        run: make build-preflight fetch
-
-      - name: Build native and guest PostgreSQL and benchmark client
-        run: make pg-native pg-guest benchmark-build
-
-      - name: Bundle verified PostgreSQL artifacts
-        run: |
-          tar -czf "$GITHUB_WORKSPACE/pg${{ matrix.pg }}/target/postgres-build.tar.gz" \
-            -C target/postgres-experiment \
-            native-pg \
-            postgres-native-build/experiment-inputs.json \
-            postgres-native-build/src/include/pg_config.h \
-            postgres-guest-build/experiment-inputs.json \
-            postgres-guest-build/src/include/pg_config.h \
-            phase2/guest-install phase5/query-client phase5/build.json
-
-      - name: Upload PostgreSQL artifacts
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: pg${{ matrix.pg }}-postgres-build
-          path: pg${{ matrix.pg }}/target/postgres-build.tar.gz
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Report compiler cache statistics
-        if: always() && steps.sccache.outcome == 'success'
-        run: sccache --show-stats
+  postgres-build-19:
+    uses: ./.github/workflows/postgres-build.yml
+    with:
+      pg: "19"
 
   hyperlight-build:
     runs-on: ubuntu-26.04
@@ -98,7 +57,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -138,7 +97,7 @@ jobs:
             phase3/kernel-build/elfloader_hyperlight-x86_64
 
       - name: Upload Hyperlight artifacts
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@v7
         with:
           name: hyperlight-build
           path: shared/target/hyperlight-build.tar.gz
@@ -150,74 +109,26 @@ jobs:
         if: always() && steps.sccache.outcome == 'success'
         run: sccache --show-stats
 
-  assemble-and-test:
-    needs: [postgres-build, hyperlight-build]
-    runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        pg: [16, 17, 18, 19]
-    defaults:
-      run:
-        working-directory: pg${{ matrix.pg }}
-    env:
-      HL_PG_VERSION: ${{ matrix.pg }}
-      HL_PG_ARTIFACT_ONLY: "1"
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
+  assemble-and-test-16:
+    needs: [postgres-build-16, hyperlight-build]
+    uses: ./.github/workflows/postgres-test.yml
+    with:
+      pg: "16"
 
-      - name: Reserve sample server ports from ephemeral allocation
-        run: |
-          reserved_ports=$(sysctl -n net.ipv4.ip_local_reserved_ports)
-          sudo -A sysctl -w "net.ipv4.ip_local_reserved_ports=${reserved_ports:+$reserved_ports,}55432-55434"
+  assemble-and-test-17:
+    needs: [postgres-build-17, hyperlight-build]
+    uses: ./.github/workflows/postgres-test.yml
+    with:
+      pg: "17"
 
-      - name: Install test and packaging dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            binutils cpio musl python3 util-linux
+  assemble-and-test-18:
+    needs: [postgres-build-18, hyperlight-build]
+    uses: ./.github/workflows/postgres-test.yml
+    with:
+      pg: "18"
 
-      - name: Check KVM and artifact validation prerequisites
-        run: make preflight
-
-      - name: Download PostgreSQL artifacts
-        uses: actions/download-artifact@v8.0.2
-        with:
-          name: pg${{ matrix.pg }}-postgres-build
-          path: pg${{ matrix.pg }}/target/artifacts
-
-      - name: Download Hyperlight artifacts
-        uses: actions/download-artifact@v8.0.2
-        with:
-          name: hyperlight-build
-          path: pg${{ matrix.pg }}/target/artifacts
-
-      - name: Restore executable artifacts and symlinks
-        run: |
-          tar -xzf target/artifacts/postgres-build.tar.gz \
-            -C target/postgres-experiment --same-permissions --no-same-owner
-          tar -xzf target/artifacts/hyperlight-build.tar.gz \
-            -C target/postgres-experiment --same-permissions --no-same-owner
-
-      - name: Assemble images and run all tests without rebuilding
-        run: make validate-built
-
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: pg${{ matrix.pg }}-failure-diagnostics
-          retention-days: 7
-          if-no-files-found: warn
-          path: |
-            pg${{ matrix.pg }}/target/postgres-experiment/*.log
-            pg${{ matrix.pg }}/target/postgres-experiment/*-results.json
-            pg${{ matrix.pg }}/target/postgres-experiment/preflight.json
-            pg${{ matrix.pg }}/target/postgres-experiment/phase*/**/*.log
-            pg${{ matrix.pg }}/target/postgres-experiment/phase*/**/results.json
-            pg${{ matrix.pg }}/target/postgres-experiment/read-benchmark/**/*.log
-            pg${{ matrix.pg }}/target/postgres-experiment/read-benchmark/**/results.json
+  assemble-and-test-19:
+    needs: [postgres-build-19, hyperlight-build]
+    uses: ./.github/workflows/postgres-test.yml
+    with:
+      pg: "19"

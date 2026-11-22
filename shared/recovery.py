@@ -87,7 +87,7 @@ def native_server(env, cpu=None):
                     "--auth-local=reject", "--auth-host=scram-sha-256",
                     f"--pwfile={storage.DATA / 'password'}"])
         with (NATIVE_DATA / "postgresql.conf").open("a") as config:
-            config.write("\n" + (runtime.HERE / "rootfs/ram-only.conf").read_text()
+            config.write("\n" + postgres.ram_profile()
                          + "\n" + storage.PROFILE.read_text()
                          + f"\nport={NATIVE_PORT}\n")
     with (DATA / "native.log").open("wb") as log:
@@ -156,6 +156,7 @@ def validate_spill(plan):
 
 
 def spill(session, name, expected):
+    postgres.verify_version_settings(session)
     for setting, value in (("fsync", "on"), ("synchronous_commit", "on"),
                            ("wal_sync_method", "fsync"), ("block_size", "8192")):
         postgres.expect(session, f"SHOW {setting};", [value])

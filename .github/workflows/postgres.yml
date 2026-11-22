@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16, 17]
+        pg: [16, 17, 18]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}
@@ -156,7 +156,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16, 17]
+        pg: [16, 17, 18]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}

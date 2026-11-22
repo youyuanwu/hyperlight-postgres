@@ -351,7 +351,7 @@ outputs through GitHub's cache backend, not databases, credentials, or validatio
 CI builds PostgreSQL and Hyperlight independently, transfers allowlisted tar bundles
 with executable modes and symlinks intact, and runs `validate-built` in a third job.
 The Hyperlight builder runs once, checks runtime pins across all versions, and
-publishes one `hyperlight-build` artifact consumed by both PG assembly/test jobs.
+publishes one `hyperlight-build` artifact consumed by all PG assembly/test jobs.
 Its kernel/host metadata is version-neutral; PostgreSQL patch/version and package
 metadata remain version-specific. Source pins/checksums/patches are verified in
 builders only. Assembly does not fetch or extract upstream sources, initialize

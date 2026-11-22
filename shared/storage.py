@@ -159,7 +159,7 @@ def initialize():
                     "--locale=C", "--auth-local=reject", "--auth-host=scram-sha-256",
                     f"--pwfile={password}"])
         with (STORAGE / "pgdata/postgresql.conf").open("a") as config:
-            config.write("\n" + (HERE / "rootfs/ram-only.conf").read_text() + "\n" + PROFILE.read_text())
+            config.write("\n" + postgres.ram_profile() + "\n" + PROFILE.read_text())
         (STORAGE / "pgdata/pg_hba.conf").write_text(
             "host all all 127.0.0.1/32 scram-sha-256\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\n")
         probes = STORAGE / "probes"
@@ -177,7 +177,7 @@ def write_storage_config():
     config = STORAGE / "pgdata/postgresql.conf"
     marker = "\n# --- hlps Phase 3 managed profile ---\n"
     existing = config.read_text().split(marker, 1)[0]
-    config.write_text(existing + marker + (HERE / "rootfs/ram-only.conf").read_text()
+    config.write_text(existing + marker + postgres.ram_profile()
                       + "\n" + PROFILE.read_text())
     meta = json.loads((DATA / "storage.json").read_text())
     meta.update(config_sha256=runtime.digest(config),
@@ -294,6 +294,7 @@ def sql_test():
                     not any(word in competing.stderr.lower() for word in ("wouldblock", "would block")):
                 raise RuntimeError("a competing VM host was not rejected before opening storage")
             with postgres.Session("storage", env, DATA) as session:
+                postgres.verify_version_settings(session)
                 for name, value in (("fsync", "on"), ("synchronous_commit", "on"), ("wal_sync_method", "fsync")):
                     postgres.expect(session, f"SHOW {name};", [value])
                 session.execute("DROP TABLE IF EXISTS storage_gate; CREATE TABLE storage_gate(id int primary key);"

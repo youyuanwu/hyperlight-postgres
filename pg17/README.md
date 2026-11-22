@@ -60,7 +60,7 @@ Optional workers, parallel query, replication, WAL summarization, and warm
 snapshots are not enabled or claimed. This is not a production PostgreSQL port
 or a power-loss durability certification.
 
-The [CI workflow](../.github/workflows/postgres.yml) builds both major versions
+The [CI workflow](../.github/workflows/postgres.yml) builds all supported major versions
 with isolated PostgreSQL artifact bundles and one shared Hyperlight bundle, then runs
 `validate-built` without recompiling. That target requires never-initialized
 persistent storage and refuses to overwrite a database.

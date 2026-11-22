@@ -26,10 +26,12 @@ class PostgresTests(unittest.TestCase):
                 postgres.validate_guest_output(output, 0, uid)
 
     def test_exact_postgres_version(self):
-        postgres.check_version("postgres (PostgreSQL) 16.15\n")
-        for value in ("postgres (PostgreSQL) 16.4", "16.15", ""):
-            with self.subTest(value=value), self.assertRaises(RuntimeError):
-                postgres.check_version(value)
+        for version in ("16.15", "17.1"):
+            with patch.object(postgres.runtime, "pins", return_value={"postgres": {"version": version}}):
+                postgres.check_version(f"postgres (PostgreSQL) {version}\n")
+                for value in ("postgres (PostgreSQL) 16.4", "16.15", ""):
+                    with self.subTest(version=version, value=value), self.assertRaises(RuntimeError):
+                        postgres.check_version(value)
 
     def test_rss_threshold(self):
         postgres.check_rss_growth(1000, 33768)

@@ -39,7 +39,7 @@ def clients():
         if not path.is_file():
             raise RuntimeError(f"missing {name}; run make pg-native")
         version = runtime.run([path, "--version"], capture=True).strip()
-        if version != f"{name} (PostgreSQL) 16.15":
+        if version != f"{name} (PostgreSQL) {runtime.pins()['postgres']['version']}":
             raise RuntimeError(f"unexpected standard PostgreSQL client: {version}")
         result[name] = {"version": version, "sha256": runtime.digest(path)}
     result["libpq_sha256"] = runtime.digest((postgres.NATIVE / "lib/libpq.so").resolve())

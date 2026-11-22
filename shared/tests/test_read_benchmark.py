@@ -10,6 +10,19 @@ import read_benchmark as benchmark
 
 
 class ReadBenchmarkTests(unittest.TestCase):
+    def test_clients_require_the_selected_version_not_a_fixed_pg16_release(self):
+        with patch.object(Path, "is_file", return_value=True), \
+                patch.object(benchmark.runtime, "digest", return_value="sha256"), \
+                patch.object(benchmark.runtime, "pins", return_value={"postgres": {"version": "17.1"}}):
+            def version(args, **kwargs):
+                return f"{args[0].name} (PostgreSQL) 17.1\n"
+
+            with patch.object(benchmark.runtime, "run", side_effect=version):
+                self.assertEqual(benchmark.clients()["pgbench"]["version"], "pgbench (PostgreSQL) 17.1")
+            with patch.object(benchmark.runtime, "run", return_value="pgbench (PostgreSQL) 16.15\n"):
+                with self.assertRaisesRegex(RuntimeError, "unexpected standard PostgreSQL client"):
+                    benchmark.clients()
+
     def test_pgbench_requires_all_transactions_and_exact_log_shape(self):
         output = ("number of transactions actually processed: 4/4\n"
                   "number of failed transactions: 0 (0.000%)\n"

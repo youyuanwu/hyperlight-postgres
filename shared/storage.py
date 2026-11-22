@@ -40,11 +40,12 @@ def ownership(path):
 
 def inputs():
     paths = [HERE / "runtime.py", HERE / "postgres.py", HERE / "storage.py",
-             HERE / "Makefile", HERE / "storage-host.rs", HERE / "sources.toml",
+             HERE / "Makefile", HERE / "storage-host.rs",
+             runtime.VERSION_DIR / "Makefile", runtime.VERSION_DIR / "sources.toml",
              HERE / "tests/storage.c", HERE / "rootfs/init.c", HERE / "rootfs/kernel.conf", PROFILE]
     for name in (*runtime.PATCH_TARGETS, "postgres"):
         paths.extend(runtime.patch_files(name))
-        series = HERE / "patches" / name / "series"
+        series = runtime.patch_directory(name) / "series"
         if series.exists():
             paths.append(series)
     return {str(path): runtime.digest(path) for path in paths}

@@ -136,7 +136,10 @@ class ResultTests(unittest.TestCase):
             repository = root / "workspace/hyperlight-postgres"
             sample = repository / "pg16"
             sample.mkdir(parents=True)
-            script = sample / "runtime.py"
+            (sample / "sources.toml").write_text('[postgres]\nversion = "16.15"\n')
+            shared = repository / "shared"
+            shared.mkdir()
+            script = shared / "runtime.py"
             shutil.copy2(runtime.__file__, script)
             spec = importlib.util.spec_from_file_location("standalone_runtime", script)
             standalone = importlib.util.module_from_spec(spec)
@@ -150,6 +153,58 @@ class ResultTests(unittest.TestCase):
             self.assertTrue((sample / "target/postgres-experiment/phase1.lock").is_file())
             self.assertFalse((repository / "target").exists())
             self.assertFalse((root / "target").exists())
+            self.assertFalse((shared / "target").exists())
+
+    def test_version_selection_is_explicit_and_keeps_work_directories_isolated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shared = root / "shared"
+            shared.mkdir()
+            script = shared / "runtime.py"
+            shutil.copy2(runtime.__file__, script)
+            for major in ("16", "17"):
+                directory = root / f"pg{major}"
+                directory.mkdir()
+                (directory / "sources.toml").write_text(f'[postgres]\nversion = "{major}.1"\n')
+            with patch.object(runtime, "HERE", root / "shared"):
+                for major in ("16", "17"):
+                    with patch.dict(runtime.os.environ, {"HL_PG_VERSION": major}):
+                        self.assertEqual(runtime.version_directory(), root / f"pg{major}")
+                        spec = importlib.util.spec_from_file_location("selected_runtime", script)
+                        selected = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(selected)
+                        self.assertEqual(selected.WORK, root / f"pg{major}/target/postgres-experiment")
+                        self.assertEqual(selected.pins()["postgres"]["version"], f"{major}.1")
+                        self.assertFalse(selected.WORK.exists())
+                for value in ("", "../16", "pg16", "016", "16.15", "99"):
+                    with patch.dict(runtime.os.environ, {"HL_PG_VERSION": value}):
+                        with self.subTest(version=value), self.assertRaises(RuntimeError):
+                            runtime.version_directory()
+                with patch.object(runtime, "VERSION_DIR", root / "pg17"):
+                    self.assertEqual(runtime.pins()["postgres"]["version"], "17.1")
+                    (root / "pg17/sources.toml").write_text('[postgres]\nversion = "16.15"\n')
+                    with self.assertRaisesRegex(RuntimeError, "does not match pg17"):
+                        runtime.pins()
+
+    def test_postgres_patches_are_version_local_and_runtime_patches_are_shared(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("shared/patches/unikraft", "pg16/patches/postgres", "pg17/patches/postgres"):
+                directory = root / name
+                directory.mkdir(parents=True)
+                (directory / "series").write_text("one.patch\n")
+                (directory / "one.patch").write_text(name)
+            with patch.object(runtime, "HERE", root / "shared"):
+                for major in ("16", "17"):
+                    with patch.object(runtime, "VERSION_DIR", root / f"pg{major}"):
+                        self.assertEqual(runtime.patch_files("postgres"),
+                                         [root / f"pg{major}/patches/postgres/one.patch"])
+                        self.assertEqual(runtime.patch_files("unikraft"),
+                                         [root / "shared/patches/unikraft/one.patch"])
+                (root / "pg17/patches/postgres/series").unlink()
+                with patch.object(runtime, "VERSION_DIR", root / "pg17"):
+                    with self.assertRaisesRegex(RuntimeError, "Missing PostgreSQL patch series"):
+                        runtime.patch_files("postgres")
 
     def test_cargo_build_settings_enforce_release_even_with_environment_overrides(self):
         with patch.dict(runtime.os.environ, {"CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",

@@ -34,7 +34,7 @@ A stale data-directory shared-memory interlock is a fatal error, not a
 successful "unused" result. The persistent host removes only recognized stale
 guest lockfiles while exclusively owning storage. PostgreSQL's existing mmap
 DSM startup cleanup removes old descriptors without attaching their addresses;
-[Recovery tests](../../recovery.py) verify fresh identities across actual crashes. This is not a
+[Recovery tests](../../../shared/recovery.py) verify fresh identities across actual crashes. This is not a
 production PostgreSQL replacement on Linux or a power-loss durability proof.
 
 The SQL gate validates required auxiliary processes, independent concurrent

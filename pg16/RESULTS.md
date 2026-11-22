@@ -71,7 +71,7 @@ and one-row update table before each repeat. Dedicated PGDATA/WAL directories
 are reused, not byte-identical clones. Preparation, EXPLAIN, and checkpointing
 are outside query timing and warm caches; the host page cache is retained.
 
-The [libpq timing client](tests/query-client.c) measures synchronous
+The [libpq timing client](../shared/tests/query-client.c) measures synchronous
 `PQexec` completion, excluding result validation and CSV output. Short
 workloads have 50 untimed calls followed by 1,000 selects/lookups or 300
 autocommit updates. Spilling has one untimed and five measured checksums.

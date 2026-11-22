@@ -31,7 +31,13 @@ Use Linux x86_64 with KVM and run builds as an ordinary user.
 The guest kernel and packaged image use that user's UID/GID. Rebuild and
 repackage guest artifacts when changing host users; ownership checks remain enabled.
 Run all commands below from this repository's `pg16/` directory (`cd pg16`
-from the repository root). This project was originally
+from the repository root), or use `make PG=16 <target>` at the repository root.
+The reusable implementation lives in [shared/](../shared/); this directory
+retains PG16 source pins, PostgreSQL patches, documentation, and generated data.
+Direct Python commands use `HL_PG_VERSION=16 python3 ../shared/<script>.py`.
+After this layout change, rebuild/repackage artifacts to update fingerprints;
+do not delete or reinitialize existing persistent storage.
+This project was originally
 the PostgreSQL sample in
 [hyperlight-process](https://github.com/youyuanwu/hyperlight-process); its
 sample-specific Git history is preserved here.
@@ -135,35 +141,35 @@ requires a current successful recovery result for the same inputs.
 
 ### Runtime and SQL
 
-[runtime.py](runtime.py) builds the pinned kernel/CLI and runs
-[process.c](tests/process.c) as the same ordinary musl PIE natively and in KVM.
+[runtime.py](../shared/runtime.py) builds the pinned kernel/CLI and runs
+[process.c](../shared/tests/process.c) as the same ordinary musl PIE natively and in KVM.
 The cases are `hello`, `spawn`, `pipes`, `signals`, `blocked-signals`, `setsid`,
 `tls`, `stack`, and `shared`. They check 32 child reexecutions, eight pipe
 exchanges, caught/masked signals, independent globals/TLS, actual stack
 touching, and 32 cross-process semaphore rounds.
 
-[postgres.py](postgres.py) builds native tools from an unmodified source tree
+[postgres.py](../shared/postgres.py) builds native tools from an unmodified source tree
 and the guest server from a separately patched tree. Its SQL suite rejects
 wrong credentials, requires distinct simultaneous backends and the necessary
 auxiliary processes, verifies transactions/dirty-read refusal and independent
 settings/temp tables, and checks reconnect RSS growth against the
 32 MiB limit.
 
-[init.c](rootfs/init.c) is a Linux PIE supervisor: it checks guest ownership and
+[init.c](../shared/rootfs/init.c) is a Linux PIE supervisor: it checks guest ownership and
 shared-mapping lifetime, starts PostgreSQL with `posix_spawn`, and reaps it.
 A separate loopback control thread accepts shutdown only with the current
 VM identity. It does not rely on the pinned CLI's blocking stdin callback.
 
 ### Filesystem and recovery
 
-[storage.py](storage.py), [storage-host.rs](storage-host.rs), and
-[storage.c](tests/storage.c) implement the observed, quota-limited host backend.
+[storage.py](../shared/storage.py), [storage-host.rs](../shared/storage-host.rs), and
+[storage.c](../shared/tests/storage.c) implement the observed, quota-limited host backend.
 Successful audit entries follow actual OS synchronization, not stubbed success.
 File/directory/synchronous-write errors, partial-write EIO, EDQUOT, and EROFS
 are propagated. Unsupported hostfs record locks/flock and mount-wide sync fail
 explicitly. Bounded lexical pagination holds at most 128 entries per page.
 
-[recovery.py](recovery.py) requires an actual external sort and nonzero temp
+[recovery.py](../shared/recovery.py) requires an actual external sort and nonzero temp
 reads/writes in JSON EXPLAIN ANALYZE, checks every ordered-result checksum
 against native PostgreSQL and an independent expectation, and verifies cleanup.
 The fixture's checksum is `6d334d76c6d5153bbf8eebf552f99702`.
@@ -183,7 +189,7 @@ allowed to be unknown rather than misreported as rollback.
 
 ### Performance
 
-[runtime.py](runtime.py) and [storage.py](storage.py) build Rust hosts with
+[runtime.py](../shared/runtime.py) and [storage.py](../shared/storage.py) build Rust hosts with
 `cargo --release`: optimization level 3, no debug information, debug assertions,
 overflow checks, or incremental compilation. The pinned kernel uses a
 performance-optimized configuration. Native and guest PostgreSQL both use
@@ -204,7 +210,7 @@ virtualization overhead. Profiling is off in measured runs and on only in the
 separate diagnostic. Disabling assertions in server builds does not disable
 the sample's correctness checks or test assertions.
 
-[evaluate.py](evaluate.py) and [query-client.c](tests/query-client.c) implement
+[evaluate.py](../shared/evaluate.py) and [query-client.c](../shared/tests/query-client.c) implement
 the compiled libpq measurement path. Each mode runs three times in rotating
 order, with 1,000 selects, 1,000 indexed lookups, 300 synchronous updates, and
 five spill checksums per repeat, after untimed warm-ups.
@@ -228,7 +234,7 @@ make check read-benchmark
 make read-benchmark
 ```
 
-[read_benchmark.py](read_benchmark.py) reuses the same 100,000-row fixture,
+[read_benchmark.py](../shared/read_benchmark.py) reuses the same 100,000-row fixture,
 CPU pinning, credentials, guarded launchers, and resource limits. Preparation
 recreates only `spill_fixture` and `eval_commits` in the dedicated databases,
 verifies the exact checksum, checkpoints, and stops both servers.
@@ -297,7 +303,7 @@ sources, builds, CPIOs, logs/audits, passwords, result metadata, and databases.
 PostgreSQL clients authenticate as the `phase2` test database role. Use the
 targets above to build and validate the sample.
 
-The persistent directory is [storage.STORAGE](storage.py); its PGDATA is
+The persistent directory is [storage.STORAGE](../shared/storage.py); its PGDATA is
 mounted at `/storage/pgdata`. Application/kernel files remain RAM-backed, and
 live PGDATA is never copied into a rootfs image. Native initialization uses
 real synchronization, not `--no-sync`. Generated SCRAM credentials/pgpass files
@@ -323,8 +329,8 @@ file stops the next test rather than being silently cleared.
 kernel submodules. Locally authored ordered patches preserve
 upstream notices and document their provenance:
 [PostgreSQL](patches/postgres/README.md),
-[Unikraft](patches/unikraft/README.md), and
-[Hyperlight-Unikraft](patches/hyperlight-unikraft/README.md).
+[Unikraft](../shared/patches/unikraft/README.md), and
+[Hyperlight-Unikraft](../shared/patches/hyperlight-unikraft/README.md).
 No source fork or PostgreSQL submodule is required.
 
 Builds default to one job; `HL_PG_BUILD_JOBS` selects a positive build-job count

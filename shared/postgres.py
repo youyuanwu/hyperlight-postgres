@@ -55,7 +55,7 @@ def prepare_sources():
             runtime.run(["git", "add", "."], cwd=source)
             runtime.run(["git", "-c", "user.name=Experiment source import",
                         "-c", "user.email=experiment@localhost", "commit", "-q",
-                        "-m", "Import verified PostgreSQL 16.15 source archive",
+                        "-m", f"Import verified PostgreSQL {spec['version']} source archive",
                         "-m", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"],
                        cwd=source)
     native_tree = runtime.run(["git", "rev-parse", "HEAD^{tree}"],
@@ -156,12 +156,13 @@ def bytes_in(path):
 
 def inputs():
     paths = [HERE / "runtime.py", HERE / "postgres.py", HERE / "Makefile",
-             HERE / "sources.toml", HERE / "rootfs/init.c",
-             HERE / "rootfs/kernel.conf", PROFILE, HERE / "patches/postgres/series"]
+             runtime.VERSION_DIR / "Makefile", runtime.VERSION_DIR / "sources.toml",
+             HERE / "rootfs/init.c", HERE / "rootfs/kernel.conf", PROFILE,
+             runtime.patch_directory("postgres") / "series"]
     paths.extend(runtime.patch_files("postgres"))
     for name in runtime.PATCH_TARGETS:
         paths.extend(runtime.patch_files(name))
-        series = HERE / "patches" / name / "series"
+        series = runtime.patch_directory(name) / "series"
         if series.exists():
             paths.append(series)
     return {str(path): runtime.digest(path) for path in paths}
@@ -499,7 +500,8 @@ def test():
                     raise RuntimeError(f"Required auxiliary processes missing: {workers}")
                 result["auxiliary_processes"] = sorted(workers - {"client backend"})
                 expect(a, "SHOW fsync;", ["off"])
-                expect(a, "SHOW server_version_num;", ["160015"])
+                major, minor = map(int, runtime.pins()["postgres"]["version"].split("."))
+                expect(a, "SHOW server_version_num;", [str(major * 10000 + minor)])
                 expect(a, "SELECT current_user;", ["phase2"])
                 expect(a, "SHOW max_connections;", ["2"])
                 expect(a, "SHOW max_stack_depth;", ["512kB"])

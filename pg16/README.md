@@ -167,8 +167,10 @@ VM identity. It does not rely on the pinned CLI's blocking stdin callback.
 
 ### Filesystem and recovery
 
-[storage.py](../shared/storage.py), [storage-host.rs](../shared/storage-host.rs), and
+[storage.py](../shared/storage.py), [storage host](../shared/storage-host/src/main.rs), and
 [storage.c](../shared/tests/storage.c) implement the observed, quota-limited host backend.
+The storage host is a shared package in the root
+[Cargo workspace](../README.md#rust-storage-host), built by `storage-build`.
 Successful audit entries follow actual OS synchronization, not stubbed success.
 File/directory/synchronous-write errors, partial-write EIO, EDQUOT, and EROFS
 are propagated. Unsupported hostfs record locks/flock and mount-wide sync fail

@@ -341,7 +341,7 @@ def main():
         with ownership(STORAGE):
             print("storage ownership acquired")
         return
-    with (WORK / "phase1.lock").open("w") as lock:
+    with runtime.upstream_lock(), (WORK / "phase1.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         {"build": build, "package": package, "init": initialize,
          "configure": configure, "test": test}[args.command]()

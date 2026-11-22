@@ -15,7 +15,10 @@ import storage
 class WiringTests(unittest.TestCase):
     def test_root_and_version_makefiles_route_to_the_shared_implementation(self):
         repository = runtime.HERE.parent
-        for directory, selection in ((repository, ["PG=16"]), (repository / "pg16", [])):
+        commands = [(directory, selection) for major in ("16", "17")
+                    for directory, selection in ((repository, [f"PG={major}"]),
+                                                 (repository / f"pg{major}", []))]
+        for directory, selection in commands:
             result = subprocess.run(["make", "--no-print-directory", "-n", "-C", str(directory),
                                      *selection, "pg-native", "validate-built"],
                                     capture_output=True, text=True, timeout=5)

@@ -297,9 +297,14 @@ or scheduling; see the diagnostic's method and four-sample limitations.
 
 ## Data, configuration, and ownership
 
-Everything generated is ignored beneath `pg16/target/postgres-experiment/`
+Version-specific generated files are ignored beneath `pg16/target/postgres-experiment/`
 relative to the repository root:
-sources, builds, CPIOs, logs/audits, passwords, result metadata, and databases.
+PostgreSQL sources, builds, CPIOs, logs/audits, passwords, result metadata, and databases.
+Hyperlight-Unikraft and its submodules are checked out once under
+`shared/target/sources/hyperlight-unikraft/`, with shared runtime patch stamps.
+An exclusive shared command lock protects mutable upstream build files across
+PG versions; competing commands fail explicitly. Kernel/Cargo build outputs
+remain version-local, and mismatched runtime pins are rejected without resets.
 PostgreSQL clients authenticate as the `phase2` test database role. Use the
 targets above to build and validate the sample.
 

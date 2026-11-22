@@ -2,6 +2,7 @@
 """Pinned runtime builds and native/KVM process validation."""
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -30,7 +31,8 @@ def version_directory():
 
 VERSION_DIR = version_directory()
 WORK = VERSION_DIR / "target/postgres-experiment"
-UPSTREAM = WORK / "sources/hyperlight-unikraft"
+SHARED_WORK = HERE / "target"
+UPSTREAM = SHARED_WORK / "sources/hyperlight-unikraft"
 CASES = ("hello", "spawn", "pipes", "signals", "blocked-signals", "setsid",
          "tls", "stack", "shared")
 PATCH_TARGETS = {"hyperlight-unikraft": ".", "unikraft": "kernel/unikraft",
@@ -107,6 +109,17 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+@contextmanager
+def upstream_lock():
+    SHARED_WORK.mkdir(parents=True, exist_ok=True)
+    with (SHARED_WORK / "upstream.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("Another command is using the shared Hyperlight-Unikraft checkout") from error
+        yield
+
+
 def preflight(*, require_kvm=True):
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise RuntimeError("The PostgreSQL sample requires Linux x86_64")
@@ -141,7 +154,8 @@ def preflight(*, require_kvm=True):
 
 
 def checkout(name, spec):
-    path = WORK / "sources" / name
+    path = SHARED_WORK / "sources" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         run(["git", "clone", "--no-checkout", "--filter=blob:none", "--depth", "1",
              spec["url"], path])
@@ -214,7 +228,7 @@ def prepare_patches():
 def prepare_patch_target(name, path, exclusions=()):
     files = patch_files(name)
     expected = [{"name": p.name, "sha256": digest(p)} for p in files]
-    stamp = WORK / f"{name}-patches.json"
+    stamp = (SHARED_WORK if name in PATCH_TARGETS else WORK) / f"{name}-patches.json"
     command = ["git", "diff", "--ignore-submodules=dirty", "--binary", "HEAD",
                "--", ".", *exclusions]
     diff = run(command, cwd=path, capture=True)
@@ -443,7 +457,7 @@ def main():
                                            "test-native", "test-native-built", "test-guest"))
     command = parser.parse_args().command
     WORK.mkdir(parents=True, exist_ok=True)
-    with (WORK / "phase1.lock").open("w") as lock:
+    with upstream_lock(), (WORK / "phase1.lock").open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:

@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -143,7 +145,8 @@ class ResultTests(unittest.TestCase):
             shutil.copy2(runtime.__file__, script)
             spec = importlib.util.spec_from_file_location("standalone_runtime", script)
             standalone = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(standalone)
+            with patch.dict(runtime.os.environ, {"HL_PG_VERSION": "16"}):
+                spec.loader.exec_module(standalone)
 
             with patch.object(standalone, "preflight") as preflight, \
                     patch.object(standalone.sys, "argv", [str(script), "preflight"]):
@@ -153,7 +156,8 @@ class ResultTests(unittest.TestCase):
             self.assertTrue((sample / "target/postgres-experiment/phase1.lock").is_file())
             self.assertFalse((repository / "target").exists())
             self.assertFalse((root / "target").exists())
-            self.assertFalse((shared / "target").exists())
+            self.assertTrue((shared / "target/upstream.lock").is_file())
+            self.assertFalse((shared / "target/sources").exists())
 
     def test_version_selection_is_explicit_and_keeps_work_directories_isolated(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -174,6 +178,7 @@ class ResultTests(unittest.TestCase):
                         selected = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(selected)
                         self.assertEqual(selected.WORK, root / f"pg{major}/target/postgres-experiment")
+                        self.assertEqual(selected.UPSTREAM, shared / "target/sources/hyperlight-unikraft")
                         self.assertEqual(selected.pins()["postgres"]["version"], f"{major}.1")
                         self.assertFalse(selected.WORK.exists())
                 for value in ("", "../16", "pg16", "016", "16.15", "99"):
@@ -205,6 +210,67 @@ class ResultTests(unittest.TestCase):
                 with patch.object(runtime, "VERSION_DIR", root / "pg17"):
                     with self.assertRaisesRegex(RuntimeError, "Missing PostgreSQL patch series"):
                         runtime.patch_files("postgres")
+
+    def test_upstream_checkout_is_reused_across_versions_and_rejects_a_different_pin(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spec = {"url": "https://example.invalid/upstream.git", "commit": "pinned"}
+
+            def output(args, **kwargs):
+                if args[1] == "clone":
+                    Path(args[-1]).mkdir()
+                return "pinned\n"
+
+            with patch.object(runtime, "SHARED_WORK", root / "shared"), \
+                    patch.object(runtime, "run", side_effect=output) as run:
+                for major in ("16", "17"):
+                    with patch.object(runtime, "WORK", root / f"pg{major}"):
+                        self.assertEqual(runtime.checkout("hyperlight-unikraft", spec),
+                                         root / "shared/sources/hyperlight-unikraft")
+                self.assertEqual(sum(call.args[0][1] == "clone" for call in run.call_args_list), 1)
+                self.assertFalse((root / "pg16").exists())
+                self.assertFalse((root / "pg17").exists())
+                with self.assertRaisesRegex(RuntimeError, "unexpected HEAD"):
+                    runtime.checkout("hyperlight-unikraft", dict(spec, commit="different"))
+
+    def test_shared_patch_stamp_survives_switching_postgres_versions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shared = root / "shared"
+            shared.mkdir()
+            patchfile = root / "one.patch"
+            patchfile.write_text("patch")
+            with patch.object(runtime, "SHARED_WORK", shared), \
+                    patch.object(runtime, "patch_files", return_value=[patchfile]), \
+                    patch.object(runtime, "run", return_value="") as run:
+                for major in ("16", "17"):
+                    work = root / f"pg{major}"
+                    work.mkdir()
+                    with patch.object(runtime, "WORK", work):
+                        runtime.prepare_patch_target("unikraft", root)
+                    self.assertFalse((work / "unikraft-patches.json").exists())
+                self.assertEqual(sum(call.args[0][1:3] == ["apply", "--check"]
+                                     for call in run.call_args_list), 1)
+                self.assertTrue((shared / "unikraft-patches.json").is_file())
+
+    def test_shared_checkout_lock_rejects_another_process_and_releases_after_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            shared = Path(temporary)
+            code = (f"import sys; sys.path.insert(0, {str(runtime.HERE)!r}); "
+                    "import runtime; from pathlib import Path; "
+                    f"runtime.SHARED_WORK=Path({str(shared)!r}); "
+                    "ctx=runtime.upstream_lock(); ctx.__enter__()")
+            with patch.object(runtime, "SHARED_WORK", shared):
+                with self.assertRaisesRegex(RuntimeError, "test error"):
+                    with runtime.upstream_lock():
+                        result = subprocess.run([sys.executable, "-c", code],
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("shared Hyperlight-Unikraft checkout", result.stderr)
+                        raise RuntimeError("test error")
+                result = subprocess.run([sys.executable, "-c", code],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_cargo_build_settings_enforce_release_even_with_environment_overrides(self):
         with patch.dict(runtime.os.environ, {"CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",
@@ -287,6 +353,7 @@ class ResultTests(unittest.TestCase):
                 return ""
 
             with patch.object(runtime, "HERE", root), patch.object(runtime, "WORK", root), \
+                    patch.object(runtime, "SHARED_WORK", root), \
                     patch.object(runtime, "UPSTREAM", root), patch.object(runtime, "run", output):
                 runtime.prepare_patches()
                 applies = [args for args in calls if args[1] == "apply"]

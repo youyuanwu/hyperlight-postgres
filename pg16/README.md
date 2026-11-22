@@ -349,7 +349,10 @@ Builds default to one job; `HL_PG_BUILD_JOBS` selects a positive build-job count
 with sccache; `RUSTC_WRAPPER=sccache` enables Rust caching. CI caches compiler
 outputs through GitHub's cache backend, not databases, credentials, or validation results.
 CI builds PostgreSQL and Hyperlight independently, transfers allowlisted tar bundles
-with executable modes and symlinks intact, and runs `validate-built` in a third job.
+with executable modes and symlinks intact, and runs `validate-built` in
+version-specific assembly/test jobs. Each test job depends only on its matching
+PostgreSQL builder and the shared Hyperlight builder; unrelated version builds
+do not delay or skip it. Reusable workflows keep the PostgreSQL build/test steps shared.
 The Hyperlight builder runs once, reads the shared runtime manifest, and
 publishes one `hyperlight-build` artifact consumed by all PG assembly/test jobs.
 Its kernel/host metadata is version-neutral; PostgreSQL patch/version and package

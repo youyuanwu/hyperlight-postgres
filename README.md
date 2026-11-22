@@ -46,7 +46,15 @@ PostgreSQL sources, builds, logs, credentials, and databases stay isolated under
 Kernel outputs and Cargo build directories also remain version-local; sharing
 the local source checkout does not itself deduplicate compilation.
 CI builds Hyperlight once and supplies the same verified runtime bundle to all
-PostgreSQL assembly/test jobs. Runtime metadata contains only shared source,
+PostgreSQL assembly/test jobs. Each version's test job depends only on its
+matching PostgreSQL builder and the shared Hyperlight builder; slow or failed
+builds of other PostgreSQL versions do not block it. The
+[CI workflow](.github/workflows/postgres.yml) declares these dependencies explicitly,
+with shared steps in reusable [build](.github/workflows/postgres-build.yml) and
+[test](.github/workflows/postgres-test.yml) workflows.
+GitHub-maintained actions use major-version tags. The sccache action remains
+pinned to a full release because upstream does not publish a major-version tag.
+Runtime metadata contains only shared source,
 configuration, compiler, and runtime pin identities; package metadata separately
 checks each PostgreSQL version, patch stack, and installed server.
 The builder uses the PG16 entry point for its output directory and loads runtime
@@ -84,8 +92,10 @@ artifact-only mode is enabled.
    `../shared/Makefile`, plus version-specific documentation.
 4. Build and validate with matching native tools and fresh, version-local PGDATA.
    Do not reuse another major version's database.
-5. Add the major to the PostgreSQL build and assembly/test matrices in the
-   [CI workflow](.github/workflows/postgres.yml). PostgreSQL artifacts
+5. Add a version-specific PostgreSQL build job and assembly/test job to the
+   [CI workflow](.github/workflows/postgres.yml), passing the major to the reusable
+   workflows. The test job must depend only on that version's builder and
+   `hyperlight-build`. PostgreSQL artifacts
    and data remain version-qualified; assembly validates the shared runtime
    bundle without recompiling.
 

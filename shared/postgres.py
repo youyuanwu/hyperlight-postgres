@@ -181,7 +181,7 @@ def bytes_in(path):
 
 
 def inputs():
-    paths = [HERE / "runtime.py", HERE / "postgres.py", HERE / "Makefile",
+    paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "postgres.py", HERE / "Makefile",
              runtime.VERSION_DIR / "Makefile", runtime.VERSION_DIR / "sources.toml",
              HERE / "rootfs/init.c", HERE / "rootfs/kernel.conf", PROFILE,
              runtime.patch_directory("postgres") / "series"]

@@ -98,16 +98,8 @@ def pins():
 
 
 def runtime_sources():
-    return {"hyperlight-unikraft": pins()["hyperlight-unikraft"]}
-
-
-def check_runtime_pins():
-    expected = runtime_sources()
-    for manifest in sorted(HERE.parent.glob("pg*/sources.toml")):
-        spec = tomllib.loads(manifest.read_text())
-        if {"hyperlight-unikraft": spec["hyperlight-unikraft"]} != expected:
-            raise RuntimeError(f"Incompatible runtime pins in {manifest}; cannot share one Hyperlight build")
-    print("PASS runtime pins: all PostgreSQL versions use the same Hyperlight dependencies", flush=True)
+    spec = tomllib.loads((HERE / "sources.toml").read_text())
+    return {"hyperlight-unikraft": spec["hyperlight-unikraft"]}
 
 
 def guest_identity():
@@ -118,7 +110,7 @@ def guest_identity():
 
 
 def build_inputs():
-    paths = [HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
+    paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
              HERE / "rootfs/init.c",
              UPSTREAM / "defconfig-elfloader", UPSTREAM / "Cargo.lock",
              Path("/lib/ld-musl-x86_64.so.1")]
@@ -198,7 +190,7 @@ def checkout(name, spec):
 
 
 def verify_upstream():
-    spec = pins()["hyperlight-unikraft"]
+    spec = runtime_sources()["hyperlight-unikraft"]
     if run(["git", "rev-parse", "HEAD"], cwd=UPSTREAM, capture=True).strip() != spec["commit"]:
         raise RuntimeError("Unexpected Hyperlight-Unikraft revision")
     status = run(["git", "submodule", "status", "--recursive"],
@@ -282,7 +274,7 @@ def fetch():
     source_dir = WORK / "sources"
     source_dir.mkdir(exist_ok=True)
     spec = pins()
-    checkout("hyperlight-unikraft", spec["hyperlight-unikraft"])
+    checkout("hyperlight-unikraft", runtime_sources()["hyperlight-unikraft"])
     status = run(["git", "submodule", "status", "--recursive"],
                  cwd=UPSTREAM, capture=True)
     if any(line.startswith(("+", "U")) for line in status.splitlines()):
@@ -517,7 +509,7 @@ def test(guest, *, prebuilt=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("preflight", "build-preflight", "check-runtime-pins", "fetch", "build",
+    parser.add_argument("command", choices=("preflight", "build-preflight", "fetch", "build",
                                            "test-native", "test-native-built", "test-guest"))
     command = parser.parse_args().command
     WORK.mkdir(parents=True, exist_ok=True)
@@ -530,8 +522,6 @@ def main():
             test(command == "test-guest", prebuilt=command == "test-native-built")
         elif command == "build-preflight":
             preflight(require_kvm=False)
-        elif command == "check-runtime-pins":
-            check_runtime_pins()
         else:
             {"preflight": preflight, "fetch": fetch, "build": build}[command]()
 

@@ -4,6 +4,9 @@ Build, runtime, packaging, and test code live in [shared/](shared/).
 Each PostgreSQL major version has its own directory containing a source
 manifest, PostgreSQL patches, a small Makefile entry point, and documentation.
 Runtime patches, the Rust storage host, rootfs profiles, and tests are shared.
+Hyperlight-Unikraft, submodule, and Rust dependency pins have one source of truth
+in [shared/sources.toml](shared/sources.toml); version manifests contain only
+their PostgreSQL release, archive URL/checksum, and license.
 
 Supported versions: [PostgreSQL 16](pg16/README.md),
 [PostgreSQL 17](pg17/README.md), and [PostgreSQL 18](pg18/README.md). The PG16
@@ -34,7 +37,7 @@ are fetched once under `shared/target/sources/hyperlight-unikraft/`, reused by a
 local PG versions. Runtime patch stamps and an exclusive command lock live in
 `shared/target/`. The lock rejects concurrent commands across versions, protecting
 the shared kernel configuration, embedded kernel, and generated Rust example.
-All versions must use compatible runtime pins; a mismatch fails without
+All versions use the shared runtime pins; a mismatched checkout fails without
 replacing or resetting the checkout.
 
 PostgreSQL sources, builds, logs, credentials, and databases stay isolated under
@@ -45,8 +48,8 @@ CI builds Hyperlight once and supplies the same verified runtime bundle to all
 PostgreSQL assembly/test jobs. Runtime metadata contains only shared source,
 configuration, compiler, and runtime pin identities; package metadata separately
 checks each PostgreSQL version, patch stack, and installed server.
-The builder uses the PG16 entry point to select runtime pins and checks that
-all version manifests agree before building. Builders verify source pins,
+The builder uses the PG16 entry point for its output directory and loads runtime
+pins from the shared manifest. Builders verify source pins,
 checksums, and patches; consumers trust those successful jobs from the same run
 and check installed-file/binary hashes, configuration, release settings, version,
 and host UID/GID without rewriting runtime metadata or fetching upstream sources.
@@ -67,17 +70,17 @@ artifact-only mode is enabled.
 
 ## Adding a PostgreSQL version
 
-1. Add `pg<major>/sources.toml` with the PostgreSQL release URL/checksum and
-   Hyperlight/Unikraft pins matching the shared checkout.
+1. Add `pg<major>/sources.toml` with only the PostgreSQL release version,
+   URL/checksum, and license. Shared runtime pins stay in
+   [shared/sources.toml](shared/sources.toml).
 2. Port the PostgreSQL patches into `pg<major>/patches/postgres/`, including
-   an ordered `series` file. Shared runtime patches must match the selected pins.
+   an ordered `series` file. The version uses the shared runtime pins and patches.
 3. Add a Makefile exporting `HL_PG_VERSION := <major>` and including
    `../shared/Makefile`, plus version-specific documentation.
 4. Build and validate with matching native tools and fresh, version-local PGDATA.
    Do not reuse another major version's database.
 5. Add the major to the PostgreSQL build and assembly/test matrices in the
-   [CI workflow](.github/workflows/postgres.yml). The single Hyperlight builder's
-   `check-runtime-pins` guard rejects incompatible manifests. PostgreSQL artifacts
+   [CI workflow](.github/workflows/postgres.yml). PostgreSQL artifacts
    and data remain version-qualified; assembly validates the shared runtime
    bundle without recompiling.
 

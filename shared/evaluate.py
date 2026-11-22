@@ -330,7 +330,7 @@ def environment(server_cpu, client_cpu):
         "postgres_builds": {"native": postgres.build_settings(False), "guest": postgres.build_settings(True)},
         "instrumentation": "hostfs mutation audit and quota accounting retained; profiler disabled for timed runs "
                            "and enabled only in the separate diagnostic; native has no hostfs audit",
-        "sources": runtime.pins(),
+        "sources": dict(runtime.pins(), **runtime.runtime_sources()),
     }
 
 

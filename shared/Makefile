@@ -1,12 +1,12 @@
 .NOTPARALLEL:
-.PHONY: setup preflight build-preflight check-runtime-pins fetch runtime-build process-test-native process-test-native-built process-test-guest process-test check pg-kernel pg-native pg-guest pg-package sql-test ram-demo storage-build storage-package storage-init storage-config storage-test persistent-demo recovery-test benchmark-build benchmark read-benchmark validate validate-built
+.PHONY: setup preflight build-preflight fetch runtime-build process-test-native process-test-native-built process-test-guest process-test check pg-kernel pg-native pg-guest pg-package sql-test ram-demo storage-build storage-package storage-init storage-config storage-test persistent-demo recovery-test benchmark-build benchmark read-benchmark validate validate-built
 
 SHARED_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 setup:
 	$(MAKE) preflight fetch pg-native pg-guest storage-build storage-package storage-init check
 
-preflight build-preflight check-runtime-pins fetch:
+preflight build-preflight fetch:
 	python3 "$(SHARED_DIR)/runtime.py" $@
 
 runtime-build:

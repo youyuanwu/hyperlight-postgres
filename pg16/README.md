@@ -106,7 +106,6 @@ Or select a capability:
 |--------|---------|
 | `check` | Helper assertions, exact thresholds/output shapes, artifact guards, and command wiring |
 | `build-preflight` | Check architecture, non-root identity, tools, and build resources without requiring KVM |
-| `check-runtime-pins` | Require all version manifests to use identical Hyperlight/Unikraft pins before sharing one CI build |
 | `process-test` | Build and run all nine native and KVM runtime probes |
 | `ram-demo` | Build/package/run the RAM-backed server and concurrent SQL/session/reconnect checks |
 | `persistent-demo` | Rebuild/package the persistent host, verify managed configuration, run storage and SQL checks |
@@ -336,8 +335,9 @@ file stops the next test rather than being silently cleared.
 
 ## Reproducible builds and bounds
 
-[sources.toml](sources.toml) pins PostgreSQL 16.15, Hyperlight-Unikraft, and all
-kernel submodules. Locally authored ordered patches preserve
+[sources.toml](sources.toml) pins PostgreSQL 16.15.
+[Shared sources](../shared/sources.toml) pin Hyperlight-Unikraft, kernel submodules,
+and Rust dependencies for all versions. Locally authored ordered patches preserve
 upstream notices and document their provenance:
 [PostgreSQL](patches/postgres/README.md),
 [Unikraft](../shared/patches/unikraft/README.md), and
@@ -350,7 +350,7 @@ with sccache; `RUSTC_WRAPPER=sccache` enables Rust caching. CI caches compiler
 outputs through GitHub's cache backend, not databases, credentials, or validation results.
 CI builds PostgreSQL and Hyperlight independently, transfers allowlisted tar bundles
 with executable modes and symlinks intact, and runs `validate-built` in a third job.
-The Hyperlight builder runs once, checks runtime pins across all versions, and
+The Hyperlight builder runs once, reads the shared runtime manifest, and
 publishes one `hyperlight-build` artifact consumed by all PG assembly/test jobs.
 Its kernel/host metadata is version-neutral; PostgreSQL patch/version and package
 metadata remain version-specific. Source pins/checksums/patches are verified in

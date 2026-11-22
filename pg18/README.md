@@ -4,7 +4,8 @@ This version pins **PostgreSQL 18.7** in [sources.toml](sources.toml).
 Native tools use unmodified sources; the musl guest server uses the
 [PG18 patch stack](patches/postgres/README.md). Build/runtime code, rootfs
 profiles, the Rust storage host, and validation suites live in [shared/](../shared/).
-Hyperlight/Unikraft pins and runtime patches match PG16 and PG17.
+Hyperlight/Unikraft pins come from [shared/sources.toml](../shared/sources.toml);
+runtime patches are shared with PG16 and PG17.
 
 ## Build and validate
 
@@ -48,7 +49,7 @@ or a power-loss durability certification.
 
 The Hyperlight-Unikraft checkout/submodules, runtime patch stamps, and exclusive
 cross-version command lock are shared under `shared/target/`. Kernel and Cargo
-outputs remain version-local. All versions must use matching runtime pins.
+outputs remain version-local. All versions use the shared runtime manifest.
 Versions use ports 55432/55433 and native comparison port 55434; run suites serially.
 
 The [CI workflow](../.github/workflows/postgres.yml) builds isolated PostgreSQL

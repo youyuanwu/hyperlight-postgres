@@ -3,6 +3,11 @@
 Status: exploration; no remote backend has been selected or implemented.
 SDK availability checked on 2026-11-22. Recheck before implementation.
 
+AWS services and no-host-mount alternatives are covered separately in
+[AWS remote storage backend choices](aws-storage.md).
+Azure Elastic SAN and filesystem-placement alternatives are covered in
+[Remote block storage architecture options](block-storage.md).
+
 ## Confirmed direction
 
 Access remote storage directly from the Rust storage host, without mounting

@@ -61,11 +61,13 @@ class WiringTests(unittest.TestCase):
                 scripts = {Path(path).name for path in inputs() if Path(path).suffix == ".py"}
                 self.assertEqual(scripts, expected)
                 self.assertIn(str(runtime.VERSION_DIR / "sources.toml"), inputs())
+                self.assertIn(str(runtime.HERE / "sources.toml"), inputs())
                 self.assertIn(str(runtime.VERSION_DIR / "Makefile"), inputs())
             runtime_files = runtime.build_inputs()["files"]
             self.assertEqual({Path(path).name for path in runtime_files if Path(path).suffix == ".py"},
                              {"runtime.py"})
             self.assertNotIn(str(runtime.VERSION_DIR / "sources.toml"), runtime_files)
+            self.assertIn(str(runtime.HERE / "sources.toml"), runtime_files)
             self.assertNotIn(str(runtime.VERSION_DIR / "Makefile"), runtime_files)
 
     def test_all_validation_commands_load(self):

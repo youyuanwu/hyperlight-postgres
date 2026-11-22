@@ -115,8 +115,8 @@ jobs:
             binutils bison build-essential cpio curl flex git m4 \
             musl-tools python3 util-linux
 
-      - name: Check shared runtime compatibility and fetch pinned sources
-        run: make build-preflight check-runtime-pins fetch
+      - name: Check build prerequisites and fetch pinned sources
+        run: make build-preflight fetch
 
       - name: Install upstream-pinned Rust toolchain
         working-directory: shared/target/sources/hyperlight-unikraft

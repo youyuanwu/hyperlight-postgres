@@ -4,7 +4,8 @@ This version pins **PostgreSQL 17.12** in [sources.toml](sources.toml).
 Native tools use unmodified sources; the musl guest server uses the
 [PG17 patch stack](patches/postgres/README.md). Build/runtime code, rootfs
 profiles, the Rust storage host, and validation suites live in [shared/](../shared/).
-Hyperlight/Unikraft pins and runtime patches are the same as PG16.
+Hyperlight/Unikraft pins come from [shared/sources.toml](../shared/sources.toml);
+runtime patches are shared with PG16 and PG18.
 
 ## Build and validate
 
@@ -64,8 +65,8 @@ The [CI workflow](../.github/workflows/postgres.yml) builds all supported major 
 with isolated PostgreSQL artifact bundles and one shared Hyperlight bundle, then runs
 `validate-built` without recompiling. That target requires never-initialized
 persistent storage and refuses to overwrite a database.
-The single Hyperlight builder verifies that all version manifests have identical
-runtime pins. Kernel and storage-host metadata exclude PostgreSQL-specific inputs;
+The single Hyperlight builder loads the shared runtime manifest.
+Kernel and storage-host metadata exclude PostgreSQL-specific inputs;
 builders verify upstream pins/checksums/patches. Each assembly trusts those
 successful jobs, checks its PostgreSQL version and installed-file hashes, and
 validates runtime configuration/compiler settings, binary hashes, and UID/GID.

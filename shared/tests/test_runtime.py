@@ -77,32 +77,37 @@ class ResultTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Native process artifact changed"):
                     runtime.verify_process_artifacts(False)
 
-    def test_shared_build_rejects_incompatible_runtime_pins_before_compiling(self):
+    def test_runtime_pins_load_only_from_shared_manifest_and_invalidate_build_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for major in ("16", "17"):
-                directory = root / f"pg{major}"
-                directory.mkdir()
-                (directory / "sources.toml").write_text(
-                    '[hyperlight-unikraft]\ncommit = "same"\n'
-                    '[hyperlight-unikraft.submodules]\nunikraft = "same"\n'
-                    '[hyperlight-unikraft.dependencies]\nhyperlight-host = "0.19.0"\n')
+            shared = root / "shared"
+            shared.mkdir()
+            manifest = shared / "sources.toml"
+            manifest.write_text(
+                '[hyperlight-unikraft]\ncommit = "same"\n'
+                '[hyperlight-unikraft.submodules]\nunikraft = "same"\n'
+                '[hyperlight-unikraft.dependencies]\nhyperlight-host = "0.19.0"\n')
             expected = {"hyperlight-unikraft": {
                 "commit": "same", "submodules": {"unikraft": "same"},
                 "dependencies": {"hyperlight-host": "0.19.0"}}}
-            manifest = root / "pg17/sources.toml"
             original = manifest.read_text()
-            with patch.object(runtime, "HERE", root / "shared"), \
-                    patch.object(runtime, "runtime_sources", return_value=expected), \
-                    patch.object(runtime, "run") as run:
-                runtime.check_runtime_pins()
+            with patch.object(runtime, "HERE", shared), \
+                    patch.object(runtime, "pins", side_effect=AssertionError("version-local pins")), \
+                    patch.object(runtime, "digest", return_value="hash"):
+                for major in ("16", "17", "18"):
+                    with patch.object(runtime, "VERSION_DIR", root / f"pg{major}"):
+                        self.assertEqual(runtime.runtime_sources(), expected)
+                inputs = runtime.build_inputs()
+                self.assertIn(str(manifest), inputs["files"])
                 for before, after in (('commit = "same"', 'commit = "other"'),
                                       ('unikraft = "same"', 'unikraft = "other"'),
                                       ('"0.19.0"', '"0.20.0"')):
                     manifest.write_text(original.replace(before, after))
-                    with self.subTest(change=before), self.assertRaisesRegex(RuntimeError, "Incompatible runtime pins"):
-                        runtime.check_runtime_pins()
-                run.assert_not_called()
+                    with self.subTest(change=before):
+                        self.assertNotEqual(runtime.build_inputs(), inputs)
+                manifest.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    runtime.runtime_sources()
 
     def test_kernel_metadata_rejects_wrong_runtime_identity_profile_and_embedded_kernel(self):
         metadata = {"inputs": {}, "sources": {}, "overlay_sha256": "overlay",
@@ -288,6 +293,7 @@ class ResultTests(unittest.TestCase):
                         self.assertEqual(selected.WORK, root / f"pg{major}/target/postgres-experiment")
                         self.assertEqual(selected.UPSTREAM, shared / "target/sources/hyperlight-unikraft")
                         self.assertEqual(selected.pins()["postgres"]["version"], f"{major}.1")
+                        self.assertEqual(set(selected.pins()), {"postgres"})
                         self.assertFalse(selected.WORK.exists())
                 for value in ("", "../16", "pg16", "016", "16.15", "99"):
                     with patch.dict(runtime.os.environ, {"HL_PG_VERSION": value}):
@@ -423,7 +429,7 @@ class ResultTests(unittest.TestCase):
     def test_submodule_identity_and_locked_version(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            spec = runtime.pins()["hyperlight-unikraft"]
+            spec = runtime.runtime_sources()["hyperlight-unikraft"]
             status = "\n".join(f" {commit} {path}" for path, commit in
                                spec["submodules"].items())
             lock = root / "Cargo.lock"

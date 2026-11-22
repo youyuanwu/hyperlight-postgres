@@ -39,7 +39,7 @@ def ownership(path):
 
 
 def inputs():
-    paths = [HERE / "runtime.py", HERE / "postgres.py", HERE / "storage.py",
+    paths = [HERE / "sources.toml", HERE / "runtime.py", HERE / "postgres.py", HERE / "storage.py",
              HERE / "Makefile", HERE / "storage-host.rs",
              runtime.VERSION_DIR / "Makefile", runtime.VERSION_DIR / "sources.toml",
              HERE / "tests/storage.c", HERE / "rootfs/init.c", HERE / "rootfs/kernel.conf", PROFILE]

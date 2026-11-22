@@ -62,7 +62,7 @@ class PostgresTests(unittest.TestCase):
                 postgres.validate_guest_output(output, 0, uid)
 
     def test_exact_postgres_version(self):
-        for version in ("16.15", "17.1", "18.7"):
+        for version in ("16.15", "17.1", "18.7", "19.0"):
             with patch.object(postgres.runtime, "pins", return_value={"postgres": {"version": version}}):
                 postgres.check_version(f"postgres (PostgreSQL) {version}\n")
                 for value in ("postgres (PostgreSQL) 16.4", "16.15", ""):
@@ -71,28 +71,30 @@ class PostgresTests(unittest.TestCase):
 
     def test_ram_profile_selects_sync_io_only_for_versions_with_aio(self):
         profile = postgres.PROFILE.read_text()
-        for version in ("16.15", "17.12", "18.7"):
+        for version in ("16.15", "17.12", "18.7", "19.0"):
             with self.subTest(version=version), \
                     patch.object(postgres.runtime, "pins", return_value={"postgres": {"version": version}}):
                 rendered = postgres.ram_profile()
-                if version.startswith("18."):
+                if version.startswith(("18.", "19.")):
                     self.assertEqual(rendered, profile + "\nio_method = sync\n")
                 else:
                     self.assertEqual(rendered, profile)
 
-    def test_pg18_rejects_async_io_or_disabled_checksums_without_querying_older_servers(self):
+    def test_aio_versions_reject_async_io_or_disabled_checksums_without_querying_older_servers(self):
         session = Mock()
         for version in ("16.15", "17.12"):
             with patch.object(postgres.runtime, "pins", return_value={"postgres": {"version": version}}):
                 postgres.verify_version_settings(session)
         session.execute.assert_not_called()
-        with patch.object(postgres.runtime, "pins", return_value={"postgres": {"version": "18.7"}}):
-            session.execute.return_value = ["sync|on"]
-            postgres.verify_version_settings(session)
-            for actual in (["worker|on"], ["io_uring|on"], ["sync|off"], []):
-                session.execute.return_value = actual
-                with self.subTest(actual=actual), self.assertRaisesRegex(RuntimeError, "SQL mismatch"):
-                    postgres.verify_version_settings(session)
+        for version in ("18.7", "19.0"):
+            with patch.object(postgres.runtime, "pins", return_value={"postgres": {"version": version}}):
+                session.execute.return_value = ["sync|on"]
+                postgres.verify_version_settings(session)
+                for actual in (["worker|on"], ["io_uring|on"], ["sync|off"], []):
+                    session.execute.return_value = actual
+                    with self.subTest(version=version, actual=actual), \
+                            self.assertRaisesRegex(RuntimeError, "SQL mismatch"):
+                        postgres.verify_version_settings(session)
 
     def test_rss_threshold(self):
         postgres.check_rss_growth(1000, 33768)

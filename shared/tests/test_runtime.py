@@ -94,7 +94,7 @@ class ResultTests(unittest.TestCase):
             with patch.object(runtime, "HERE", shared), \
                     patch.object(runtime, "pins", side_effect=AssertionError("version-local pins")), \
                     patch.object(runtime, "digest", return_value="hash"):
-                for major in ("16", "17", "18"):
+                for major in ("16", "17", "18", "19"):
                     with patch.object(runtime, "VERSION_DIR", root / f"pg{major}"):
                         self.assertEqual(runtime.runtime_sources(), expected)
                 inputs = runtime.build_inputs()
@@ -279,12 +279,12 @@ class ResultTests(unittest.TestCase):
             shared.mkdir()
             script = shared / "runtime.py"
             shutil.copy2(runtime.__file__, script)
-            for major in ("16", "17", "18"):
+            for major in ("16", "17", "18", "19"):
                 directory = root / f"pg{major}"
                 directory.mkdir()
                 (directory / "sources.toml").write_text(f'[postgres]\nversion = "{major}.1"\n')
             with patch.object(runtime, "HERE", root / "shared"):
-                for major in ("16", "17", "18"):
+                for major in ("16", "17", "18", "19"):
                     with patch.dict(runtime.os.environ, {"HL_PG_VERSION": major}):
                         self.assertEqual(runtime.version_directory(), root / f"pg{major}")
                         spec = importlib.util.spec_from_file_location("selected_runtime", script)

@@ -9,7 +9,8 @@ in [shared/sources.toml](shared/sources.toml); version manifests contain only
 their PostgreSQL release, archive URL/checksum, and license.
 
 Supported versions: [PostgreSQL 16](pg16/README.md),
-[PostgreSQL 17](pg17/README.md), and [PostgreSQL 18](pg18/README.md). The PG16
+[PostgreSQL 17](pg17/README.md), [PostgreSQL 18](pg18/README.md), and
+[PostgreSQL 19](pg19/README.md). The PG16
 [performance report](pg16/RESULTS.md) remains version-specific.
 
 Run from the repository root:
@@ -20,8 +21,8 @@ make PG=16 persistent-demo
 make PG=16 check
 ```
 
-For PostgreSQL 17 or 18, use `PG=17`/`PG=18` (or `make -C pg17 <target>`/
-`make -C pg18 <target>`).
+For PostgreSQL 17, 18, or 19, use `PG=17`/`PG=18`/`PG=19` (or
+`make -C pg17 <target>`/`make -C pg18 <target>`/`make -C pg19 <target>`).
 Run `setup` only for a never-initialized, version-local data directory.
 
 `PG` defaults to `16`; plain `make` runs helper tests. Existing commands such as
@@ -55,9 +56,13 @@ and check installed-file/binary hashes, configuration, release settings, version
 and host UID/GID without rewriting runtime metadata or fetching upstream sources.
 The process, RAM SQL, and persistent runtime profiles remain separate outputs.
 Versions currently use the same loopback ports; run their demos/tests serially.
-PG18 explicitly uses synchronous I/O in both guest profiles and the matching
+CI test runners reserve ports 55432-55434 from ephemeral client allocation,
+preserving any existing reservations. This prevents SQL reconnects from leaving
+a client socket in TIME_WAIT on a port needed by a later server. Local network
+settings and connection endpoints are unchanged.
+PG18 and PG19 explicitly use synchronous I/O in both guest profiles and the matching
 native baseline; worker-based AIO and io_uring are outside the supported profile.
-Its fresh databases retain PG18's default enabled data checksums.
+Their fresh databases retain upstream's default enabled data checksums.
 Changed layout/script fingerprints require rebuilding and repackaging artifacts,
 but do not require deleting or reinitializing existing PG16 storage.
 

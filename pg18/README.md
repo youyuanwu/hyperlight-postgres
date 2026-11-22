@@ -5,7 +5,7 @@ Native tools use unmodified sources; the musl guest server uses the
 [PG18 patch stack](patches/postgres/README.md). Build/runtime code, rootfs
 profiles, the Rust storage host, and validation suites live in [shared/](../shared/).
 Hyperlight/Unikraft pins come from [shared/sources.toml](../shared/sources.toml);
-runtime patches are shared with PG16 and PG17.
+runtime patches are shared with PG16, PG17, and PG19.
 
 ## Build and validate
 
@@ -53,7 +53,7 @@ outputs remain version-local. All versions use the shared runtime manifest.
 Versions use ports 55432/55433 and native comparison port 55434; run suites serially.
 
 The [CI workflow](../.github/workflows/postgres.yml) builds isolated PostgreSQL
-bundles for PG16/17/18 and one shared Hyperlight bundle.
+bundles for PG16/17/18/19 and one shared Hyperlight bundle.
 `validate-built` assembles and tests trusted artifacts without upstream source
 checkouts or compiler/cache tools, while retaining version, installed-file,
 runtime-binary, configuration, and UID/GID checks. It requires fresh persistent

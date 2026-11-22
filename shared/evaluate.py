@@ -38,6 +38,7 @@ def client_inputs():
 
 
 def build():
+    runtime.require_source_build()
     postgres.verify_postgres_install(False)
     runtime.run([*runtime.compiler_args("gcc"), "-std=c11", "-O2", "-march=x86-64", "-Wall", "-Wextra", "-Werror",
                 f"-I{postgres.NATIVE / 'include'}", runtime.HERE / "tests/query-client.c",
@@ -300,6 +301,12 @@ def environment(server_cpu, client_cpu):
     musl = subprocess.run(["/lib/ld-musl-x86_64.so.1"], capture_output=True, text=True, timeout=5)
     if musl.returncode != 1 or "musl libc" not in musl.stderr:
         raise RuntimeError("cannot identify the installed guest musl interpreter")
+    if runtime.artifact_only():
+        build = json.loads((storage.DATA / "kernel.json").read_text())
+        compiler, rustc = build["compiler"], build["rustc"]
+    else:
+        compiler = runtime.run(["gcc", "--version"], capture=True).splitlines()[0]
+        rustc = runtime.run(["rustc", "--version"], capture=True).strip()
     return {
         "platform": platform.platform(), "kernel": platform.release(),
         "cpu": {row["field"]: row["data"] for row in cpu if row["field"] in interesting},
@@ -307,8 +314,9 @@ def environment(server_cpu, client_cpu):
         "frequency_governor": governor.read_text().strip() if governor.exists() else "not exposed",
         "filesystem": json.loads(runtime.run(
             ["findmnt", "--json", "--target", DATA, "--output", "TARGET,SOURCE,FSTYPE,OPTIONS"], capture=True)),
-        "gcc": runtime.run(["gcc", "--version"], capture=True).splitlines()[0],
-        "rustc": runtime.run(["rustc", "--version"], capture=True).strip(),
+        "gcc": compiler,
+        "rustc": rustc,
+        "compiler_identity_source": "artifact build metadata" if runtime.artifact_only() else "local toolchain",
         "glibc": runtime.run(["ldd", "--version"], capture=True).splitlines()[0],
         "musl": musl.stderr.splitlines()[:3],
         "postgres": runtime.run([postgres.NATIVE / "bin/postgres", "--version"], capture=True).strip(),

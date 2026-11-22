@@ -15,6 +15,114 @@ SPEC.loader.exec_module(runtime)
 
 
 class ResultTests(unittest.TestCase):
+    def test_artifact_only_mode_is_explicit_and_refuses_source_builds(self):
+        with patch.dict(runtime.os.environ, {"HL_PG_ARTIFACT_ONLY": "1"}):
+            self.assertTrue(runtime.artifact_only())
+            for command in (runtime.fetch, runtime.build):
+                with self.assertRaisesRegex(RuntimeError, "disabled in artifact-only"):
+                    command()
+        for value in ("yes", "", "2"):
+            with patch.dict(runtime.os.environ, {"HL_PG_ARTIFACT_ONLY": value}):
+                with self.assertRaisesRegex(RuntimeError, "HL_PG_ARTIFACT_ONLY"):
+                    runtime.artifact_only()
+
+    def test_artifact_preflight_requires_runtime_tools_but_no_sources_or_compilers(self):
+        build_tools = {"git", "curl", "gcc", "musl-gcc", "flex", "bison", "m4", "cargo", "rustc", "sccache"}
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(runtime, "WORK", Path(temporary)), \
+                patch.dict(runtime.os.environ, {"HL_PG_ARTIFACT_ONLY": "1"}), \
+                patch.object(runtime.shutil, "which", side_effect=lambda name: None if name in build_tools else "/tool"), \
+                patch.object(runtime.shutil, "disk_usage", return_value=SimpleNamespace(free=8 * 1024**3)), \
+                patch.object(runtime.Path, "read_text", return_value="MemAvailable: 4194304 kB\n"), \
+                patch.object(runtime, "run", side_effect=AssertionError("tool invocation")):
+            runtime.preflight(require_kvm=False)
+
+    def test_artifact_kernel_checks_config_identity_and_settings_without_source_inputs(self):
+        metadata = {"overlay_sha256": "hash", "guest_identity": {"uid": 1001, "gid": 1001},
+                    "rust_build": runtime.RUST_BUILD, "embedded_kernel_sha256": "kernel",
+                    "kernel_sha256": "kernel", "kernel_cflags": "-std=gnu17 -march=x86-64",
+                    "compiler_command": runtime.compiler_args("gcc"), "musl_interpreter_sha256": "hash"}
+        with patch.dict(runtime.os.environ, {"HL_PG_ARTIFACT_ONLY": "1"}), \
+                patch.object(runtime, "build_inputs", side_effect=AssertionError("source inputs")), \
+                patch.object(runtime, "runtime_sources", side_effect=AssertionError("source pins")), \
+                patch.object(runtime, "patch_files", side_effect=AssertionError("source patches")), \
+                patch.object(runtime, "digest", return_value="hash"), \
+                patch.object(runtime, "guest_identity", return_value=metadata["guest_identity"]):
+            runtime.verify_kernel_metadata(metadata)
+            for change in ({"overlay_sha256": "other"}, {"musl_interpreter_sha256": "other"},
+                           {"kernel_cflags": "-O0"}, {"compiler_command": ["other-compiler"]},
+                           {"guest_identity": {"uid": 1001, "gid": 1002}},
+                           {"embedded_kernel_sha256": "other"}):
+                with self.subTest(change=change), self.assertRaises(RuntimeError):
+                    runtime.verify_kernel_metadata(dict(metadata, **change))
+
+    def test_artifact_process_validation_needs_no_upstream_and_rejects_modified_binary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "native-phase1"
+            binary.write_bytes(b"probe")
+            metadata = {"rust_build": runtime.RUST_BUILD,
+                        "kernel_cflags": "-std=gnu17 -march=x86-64",
+                        "compiler_command": runtime.compiler_args("gcc"),
+                        "musl_interpreter_sha256": runtime.digest("/lib/ld-musl-x86_64.so.1"),
+                        "native_sha256": runtime.digest(binary)}
+            (root / "build.json").write_text(json.dumps(metadata))
+            with patch.object(runtime, "WORK", root), \
+                    patch.dict(runtime.os.environ, {"HL_PG_ARTIFACT_ONLY": "1"}), \
+                    patch.object(runtime, "verify_upstream", side_effect=AssertionError("checkout")), \
+                    patch.object(runtime, "prepare_patches", side_effect=AssertionError("patches")), \
+                    patch.object(runtime, "build_inputs", side_effect=AssertionError("source hashes")):
+                runtime.verify_process_artifacts(False)
+                binary.write_bytes(b"modified")
+                with self.assertRaisesRegex(RuntimeError, "Native process artifact changed"):
+                    runtime.verify_process_artifacts(False)
+
+    def test_shared_build_rejects_incompatible_runtime_pins_before_compiling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for major in ("16", "17"):
+                directory = root / f"pg{major}"
+                directory.mkdir()
+                (directory / "sources.toml").write_text(
+                    '[hyperlight-unikraft]\ncommit = "same"\n'
+                    '[hyperlight-unikraft.submodules]\nunikraft = "same"\n'
+                    '[hyperlight-unikraft.dependencies]\nhyperlight-host = "0.19.0"\n')
+            expected = {"hyperlight-unikraft": {
+                "commit": "same", "submodules": {"unikraft": "same"},
+                "dependencies": {"hyperlight-host": "0.19.0"}}}
+            manifest = root / "pg17/sources.toml"
+            original = manifest.read_text()
+            with patch.object(runtime, "HERE", root / "shared"), \
+                    patch.object(runtime, "runtime_sources", return_value=expected), \
+                    patch.object(runtime, "run") as run:
+                runtime.check_runtime_pins()
+                for before, after in (('commit = "same"', 'commit = "other"'),
+                                      ('unikraft = "same"', 'unikraft = "other"'),
+                                      ('"0.19.0"', '"0.20.0"')):
+                    manifest.write_text(original.replace(before, after))
+                    with self.subTest(change=before), self.assertRaisesRegex(RuntimeError, "Incompatible runtime pins"):
+                        runtime.check_runtime_pins()
+                run.assert_not_called()
+
+    def test_kernel_metadata_rejects_wrong_runtime_identity_profile_and_embedded_kernel(self):
+        metadata = {"inputs": {}, "sources": {}, "overlay_sha256": "overlay",
+                    "patches": {name: [] for name in runtime.PATCH_TARGETS},
+                    "guest_identity": {"uid": 1001, "gid": 1001},
+                    "rust_build": runtime.RUST_BUILD,
+                    "embedded_kernel_sha256": "kernel", "kernel_sha256": "kernel"}
+        with patch.object(runtime, "build_inputs", return_value={}), \
+                patch.object(runtime, "runtime_sources", return_value={}), \
+                patch.object(runtime, "digest", return_value="overlay"), \
+                patch.object(runtime, "patch_files", return_value=[]), \
+                patch.object(runtime, "guest_identity", return_value=metadata["guest_identity"]):
+            runtime.verify_kernel_metadata(metadata)
+            for change in ({"sources": {"other-runtime": {}}}, {"inputs": {"stale": True}},
+                           {"overlay_sha256": "other"}, {"guest_identity": {"uid": 1001, "gid": 1002}},
+                           {"embedded_kernel_sha256": "other"},
+                           {"rust_build": dict(runtime.RUST_BUILD, profile="dev")}):
+                with self.subTest(change=change), self.assertRaises(RuntimeError):
+                    runtime.verify_kernel_metadata(dict(metadata, **change))
+
     def test_build_preflight_skips_kvm_but_test_preflight_requires_it(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(runtime, "WORK", Path(temporary)), \
@@ -112,7 +220,7 @@ class ResultTests(unittest.TestCase):
             overlay.write_text('CONFIG_LIBPOSIX_USER_USERNAME="phase2"\n')
             with patch.object(runtime, "UPSTREAM", root), \
                     patch.object(runtime, "patch_files", return_value=[]), \
-                    patch.object(runtime, "pins", return_value={}), \
+                    patch.object(runtime, "runtime_sources", return_value={}), \
                     patch.object(runtime.os, "getuid", return_value=1001), \
                     patch.object(runtime.os, "getgid", return_value=2001):
                 contents, inputs = runtime.kernel_config(overlay)

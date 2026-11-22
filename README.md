@@ -39,10 +39,27 @@ replacing or resetting the checkout.
 PostgreSQL sources, builds, logs, credentials, and databases stay isolated under
 `pg<major>/target/postgres-experiment/`. Existing PG16 databases remain in place.
 Kernel outputs and Cargo build directories also remain version-local; sharing
-the source checkout does not deduplicate compilation or CI runner checkouts.
+the local source checkout does not itself deduplicate compilation.
+CI builds Hyperlight once and supplies the same verified runtime bundle to both
+PostgreSQL assembly/test jobs. Runtime metadata contains only shared source,
+configuration, compiler, and runtime pin identities; package metadata separately
+checks each PostgreSQL version, patch stack, and installed server.
+The builder uses the PG16 entry point to select runtime pins and checks that
+all version manifests agree before building. Builders verify source pins,
+checksums, and patches; consumers trust those successful jobs from the same run
+and check installed-file/binary hashes, configuration, release settings, version,
+and host UID/GID without rewriting runtime metadata or fetching upstream sources.
+The process, RAM SQL, and persistent runtime profiles remain separate outputs.
 Versions currently use the same loopback ports; run their demos/tests serially.
 Changed layout/script fingerprints require rebuilding and repackaging artifacts,
 but do not require deleting or reinitializing existing PG16 storage.
+
+`validate-built` explicitly enables `HL_PG_ARTIFACT_ONLY=1`: it uses only the
+repository scripts/configuration and downloaded build artifacts, never upstream
+Git checkouts, PostgreSQL source extraction, or compiler tools. This mode is for
+artifacts from trusted successful build jobs. Normal local build/demo targets
+retain source verification, and source preparation/compilation is refused when
+artifact-only mode is enabled.
 
 ## Adding a PostgreSQL version
 
@@ -54,9 +71,11 @@ but do not require deleting or reinitializing existing PG16 storage.
    `../shared/Makefile`, plus version-specific documentation.
 4. Build and validate with matching native tools and fresh, version-local PGDATA.
    Do not reuse another major version's database.
-5. Add the major to all three matrices in the
-   [CI workflow](.github/workflows/postgres.yml). Artifacts and working directories
-   are version-qualified; assembly still validates without recompiling.
+5. Add the major to the PostgreSQL build and assembly/test matrices in the
+   [CI workflow](.github/workflows/postgres.yml). The single Hyperlight builder's
+   `check-runtime-pins` guard rejects incompatible manifests. PostgreSQL artifacts
+   and data remain version-qualified; assembly validates the shared runtime
+   bundle without recompiling.
 
 The shared tooling defaults to PG16 and rejects unknown versions or a source
 manifest whose PostgreSQL release does not match its directory's major version.

@@ -4,11 +4,40 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import evaluate
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_artifact_benchmark_records_builder_compilers_without_installed_build_tools(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "kernel.json").write_text(json.dumps({"compiler": "gcc builder", "rustc": "rustc builder"}))
+            (root / "build.json").write_text(json.dumps({"rust_build": evaluate.runtime.RUST_BUILD}))
+
+            def output(args, **kwargs):
+                if args[0] == "lscpu":
+                    return '{"lscpu": []}'
+                if args[0] == "findmnt":
+                    return '{"filesystems": []}'
+                if args[0] == "ldd":
+                    return "glibc test"
+                if str(args[0]).endswith("/bin/postgres"):
+                    return "postgres test"
+                raise AssertionError(f"Unexpected tool: {args}")
+
+            with patch.object(evaluate.storage, "DATA", root), \
+                    patch.dict(evaluate.runtime.os.environ, {"HL_PG_ARTIFACT_ONLY": "1"}), \
+                    patch.object(evaluate.platform, "platform", return_value="Linux test"), \
+                    patch.object(evaluate.runtime, "run", side_effect=output), \
+                    patch.object(evaluate.postgres, "build_settings", return_value={}), \
+                    patch.object(evaluate.subprocess, "run",
+                                 return_value=SimpleNamespace(returncode=1, stderr="musl libc\ntest\n")):
+                result = evaluate.environment(0, 1)
+                self.assertEqual((result["gcc"], result["rustc"]), ("gcc builder", "rustc builder"))
+                self.assertEqual(result["compiler_identity_source"], "artifact build metadata")
+
     def test_original_benchmark_still_requires_matching_client_build(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(evaluate, "DATA", Path(temporary)), \

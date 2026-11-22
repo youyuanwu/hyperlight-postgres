@@ -106,6 +106,7 @@ Or select a capability:
 |--------|---------|
 | `check` | Helper assertions, exact thresholds/output shapes, artifact guards, and command wiring |
 | `build-preflight` | Check architecture, non-root identity, tools, and build resources without requiring KVM |
+| `check-runtime-pins` | Require all version manifests to use identical Hyperlight/Unikraft pins before sharing one CI build |
 | `process-test` | Build and run all nine native and KVM runtime probes |
 | `ram-demo` | Build/package/run the RAM-backed server and concurrent SQL/session/reconnect checks |
 | `persistent-demo` | Rebuild/package the persistent host, verify managed configuration, run storage and SQL checks |
@@ -114,7 +115,7 @@ Or select a capability:
 | `benchmark-build` | Compile the bounded native libpq timing client |
 | `benchmark` | Three rotating native/guest repeats and a separate guest filesystem profile |
 | `read-benchmark` | Standard pgbench/psql full-table reads, with fresh-server/repeated scans and separate output verification |
-| `validate-built` | Package verified build artifacts, initialize fresh persistent storage, and run every suite without compiling; requires never-initialized storage |
+| `validate-built` | Package trusted build-job artifacts, initialize fresh storage, and run every suite without upstream sources or compiler tools; requires never-initialized storage |
 
 The RAM demo explicitly uses `fsync=off`: its database is a fresh RAM copy and
 SQL changes disappear on exit. It is not a fallback for persistent/recovery
@@ -136,6 +137,11 @@ make storage-config
 Tests reject changed source/build/configuration hashes; rebuild the matching
 artifacts instead of editing metadata or bypassing guards. `benchmark` also
 requires a current successful recovery result for the same inputs.
+`validate-built` sets `HL_PG_ARTIFACT_ONLY=1` and trusts the source verification
+already performed by successful build jobs. It still checks installed-file
+and runtime binary hashes, compiler/configuration settings, version, ownership,
+and the actual test results. Normal local builds retain source verification;
+artifact-only mode refuses source preparation and compilation.
 
 ## What the checks exercise
 
@@ -344,6 +350,14 @@ with sccache; `RUSTC_WRAPPER=sccache` enables Rust caching. CI caches compiler
 outputs through GitHub's cache backend, not databases, credentials, or validation results.
 CI builds PostgreSQL and Hyperlight independently, transfers allowlisted tar bundles
 with executable modes and symlinks intact, and runs `validate-built` in a third job.
+The Hyperlight builder runs once, checks runtime pins across all versions, and
+publishes one `hyperlight-build` artifact consumed by both PG assembly/test jobs.
+Its kernel/host metadata is version-neutral; PostgreSQL patch/version and package
+metadata remain version-specific. Source pins/checksums/patches are verified in
+builders only. Assembly does not fetch or extract upstream sources, initialize
+source Git trees, or install compiler/cache tools. It verifies artifact hashes,
+configuration/version/identity, packages images, and runs the full suites.
+Runtime metadata is not rewritten during assembly.
 Runtime profiles and guest tools are immutable, hashed build outputs; all jobs
 use the same compiler settings and matching non-root UID/GID. Databases and
 credentials are created only in the assembly/test job, never transferred.

@@ -51,7 +51,15 @@ def inputs():
     return {str(path): runtime.digest(path) for path in paths}
 
 
+def host_inputs():
+    paths = [HERE / "storage.py", HERE / "storage-host.rs",
+             HERE / "tests/storage.c", HERE / "rootfs/kernel.conf"]
+    return {"runtime": runtime.build_inputs(),
+            "files": {str(path): runtime.digest(path) for path in paths}}
+
+
 def build():
+    runtime.require_source_build()
     runtime.build(HERE / "rootfs/kernel.conf", DATA)
     source = runtime.UPSTREAM / "examples/postgres_storage.rs"
     shutil.copy2(HERE / "storage-host.rs", source)
@@ -65,7 +73,7 @@ def build():
                 cwd=runtime.UPSTREAM, env=env)
     runtime.compile_guest_executable(HERE / "tests/storage.c", DATA / "storage-probe")
     runtime.write_json(DATA / "host.json", {
-        "inputs": inputs(), "rust_build": runtime.RUST_BUILD,
+        "inputs": host_inputs(), "rust_build": runtime.RUST_BUILD,
         "guest_identity": runtime.guest_identity(),
         "host_sha256": runtime.digest(DATA / "storage-host"),
         "kernel_sha256": runtime.digest(DATA / "kernel-build/elfloader_hyperlight-x86_64"),
@@ -74,19 +82,33 @@ def build():
     })
 
 
-def package():
+def verify_host_artifacts():
     host = json.loads((DATA / "host.json").read_text())
-    if host["inputs"] != inputs():
+    if not runtime.artifact_only() and host["inputs"] != host_inputs():
         raise RuntimeError("storage build inputs changed; run storage-build")
     if host.get("rust_build") != runtime.RUST_BUILD:
         raise RuntimeError("Storage host must use the verified release build; run storage-build")
     identity = runtime.guest_identity()
     if host.get("guest_identity") != identity:
         raise RuntimeError("Storage host UID/GID changed; run storage-build")
-    for field, path in (("init_sha256", DATA / "pg-init"), ("probe_sha256", DATA / "storage-probe")):
+    kernel = json.loads((DATA / "kernel.json").read_text())
+    runtime.verify_kernel_metadata(kernel)
+    if host["kernel_sha256"] != kernel["kernel_sha256"] or \
+            host["init_sha256"] != kernel["init_sha256"]:
+        raise RuntimeError("Storage host and kernel metadata disagree; run storage-build")
+    for field, path in (("host_sha256", DATA / "storage-host"),
+                        ("kernel_sha256", DATA / "kernel-build/elfloader_hyperlight-x86_64"),
+                        ("init_sha256", DATA / "pg-init"), ("probe_sha256", DATA / "storage-probe")):
         if host.get(field) != runtime.digest(path):
             raise RuntimeError(f"Storage guest tool changed; run storage-build: {path}")
-    postgres.prepare_sources()
+    return host
+
+
+def package():
+    host = verify_host_artifacts()
+    identity = runtime.guest_identity()
+    if not runtime.artifact_only():
+        postgres.prepare_sources()
     postgres.verify_postgres_install(False)
     postgres.verify_postgres_install(True)
     if ROOTFS.exists():
@@ -183,9 +205,10 @@ def command(entry, audit, identity, cpu=None):
 
 
 def verify():
-    runtime.verify_upstream()
-    runtime.prepare_patches()
-    postgres.prepare_sources()
+    if not runtime.artifact_only():
+        runtime.verify_upstream()
+        runtime.prepare_patches()
+        postgres.prepare_sources()
     meta = json.loads((DATA / "build.json").read_text())
     if meta["inputs"] != inputs():
         raise RuntimeError("Storage build inputs changed; rebuild/repackage")
@@ -193,6 +216,7 @@ def verify():
         raise RuntimeError("Storage host must use the verified release build; rebuild/repackage")
     if meta.get("guest_identity") != runtime.guest_identity():
         raise RuntimeError("Storage guest UID/GID changed; rebuild/repackage")
+    verify_host_artifacts()
     for field, path in (("host_sha256", DATA / "storage-host"),
                         ("kernel_sha256", DATA / "kernel-build/elfloader_hyperlight-x86_64"),
                         ("rootfs_sha256", DATA / "postgres.cpio"),

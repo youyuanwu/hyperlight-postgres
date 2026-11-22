@@ -41,6 +41,18 @@ RUST_BUILD = {"profile": "release", "opt_level": 3, "debug": 0, "debug_assertion
               "overflow_checks": False, "incremental": False}
 
 
+def artifact_only():
+    value = os.environ.get("HL_PG_ARTIFACT_ONLY", "0")
+    if value not in ("0", "1"):
+        raise RuntimeError("HL_PG_ARTIFACT_ONLY must be 0 or 1")
+    return value == "1"
+
+
+def require_source_build():
+    if artifact_only():
+        raise RuntimeError("Source preparation and compilation are disabled in artifact-only validation")
+
+
 def build_jobs():
     try:
         jobs = int(os.environ.get("HL_PG_BUILD_JOBS", "1"))
@@ -85,6 +97,19 @@ def pins():
     return spec
 
 
+def runtime_sources():
+    return {"hyperlight-unikraft": pins()["hyperlight-unikraft"]}
+
+
+def check_runtime_pins():
+    expected = runtime_sources()
+    for manifest in sorted(HERE.parent.glob("pg*/sources.toml")):
+        spec = tomllib.loads(manifest.read_text())
+        if {"hyperlight-unikraft": spec["hyperlight-unikraft"]} != expected:
+            raise RuntimeError(f"Incompatible runtime pins in {manifest}; cannot share one Hyperlight build")
+    print("PASS runtime pins: all PostgreSQL versions use the same Hyperlight dependencies", flush=True)
+
+
 def guest_identity():
     uid, gid = os.getuid(), os.getgid()
     if uid == 0:
@@ -93,16 +118,18 @@ def guest_identity():
 
 
 def build_inputs():
-    paths = [VERSION_DIR / "sources.toml", VERSION_DIR / "Makefile",
-             HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
+    paths = [HERE / "runtime.py", HERE / "Makefile", HERE / "tests/process.c",
              HERE / "rootfs/init.c",
-             UPSTREAM / "defconfig-elfloader", UPSTREAM / "Cargo.lock"]
+             UPSTREAM / "defconfig-elfloader", UPSTREAM / "Cargo.lock",
+             Path("/lib/ld-musl-x86_64.so.1")]
     for name in PATCH_TARGETS:
         paths.extend(patch_files(name))
         series = patch_directory(name) / "series"
         if series.exists():
             paths.append(series)
-    return {str(p): digest(p) for p in paths}
+    return {"sources": runtime_sources(), "files": {str(p): digest(p) for p in paths},
+            "compilers": {"kernel": compiler_args("gcc"), "guest": compiler_args("musl-gcc")},
+            "rust_build": RUST_BUILD}
 
 
 def write_json(path, value):
@@ -128,9 +155,12 @@ def preflight(*, require_kvm=True):
     jobs = build_jobs()
     compiler = compiler_args("gcc")
     print(f"Build jobs: {jobs}; C compiler: {' '.join(compiler)}", flush=True)
-    required = ("git", "curl", "make", "gcc", "musl-gcc", "flex", "bison",
-                "m4", "cpio", "cargo", "rustc", "readelf", "timeout")
-    if compiler[0] == "sccache":
+    if artifact_only():
+        print("Artifact-only validation: no upstream sources or compiler tools required", flush=True)
+    required = ("make", "cpio", "readelf", "timeout", "taskset", "findmnt", "lscpu")
+    if not artifact_only():
+        required += ("git", "curl", "gcc", "musl-gcc", "flex", "bison", "m4", "cargo", "rustc")
+    if not artifact_only() and compiler[0] == "sccache":
         required += ("sccache",)
     missing = [tool for tool in required if not shutil.which(tool)]
     if missing:
@@ -147,8 +177,8 @@ def preflight(*, require_kvm=True):
     metadata = {"platform": platform.platform(), "cpus": os.cpu_count(),
                 "available_ram_kib": available_kib, "free_disk_bytes": free_bytes,
                 "guest_identity": identity, "build_jobs": jobs, "c_compiler": compiler,
-                "kvm_required": require_kvm}
-    for tool in ("gcc", "musl-gcc", "cargo", "rustc", "flex", "bison"):
+                "kvm_required": require_kvm, "artifact_only": artifact_only()}
+    for tool in (() if artifact_only() else ("gcc", "musl-gcc", "cargo", "rustc", "flex", "bison")):
         metadata[tool] = run([tool, "--version"], capture=True).splitlines()[0]
     write_json(WORK / "preflight.json", metadata)
 
@@ -248,6 +278,7 @@ def prepare_patch_target(name, path, exclusions=()):
 
 
 def fetch():
+    require_source_build()
     source_dir = WORK / "sources"
     source_dir.mkdir(exist_ok=True)
     spec = pins()
@@ -287,7 +318,7 @@ def kernel_config(overlay):
     patches = {name: [{"name": p.name, "sha256": digest(p)} for p in patch_files(name)]
                for name in PATCH_TARGETS}
     config_inputs = {"defconfig": digest(UPSTREAM / "defconfig-elfloader"),
-                     "sources": pins(), "patches": patches}
+                     "sources": runtime_sources(), "patches": patches}
     contents = (UPSTREAM / "defconfig-elfloader").read_bytes()
     if overlay is not None:
         identity = guest_identity()
@@ -300,6 +331,7 @@ def kernel_config(overlay):
 
 
 def build(overlay=None, output=WORK):
+    require_source_build()
     jobs = build_jobs()
     compiler = compiler_args("gcc")
     verify_upstream()
@@ -337,7 +369,7 @@ def build(overlay=None, output=WORK):
     run(["cargo", "build", "--release", "--locked", "--bin", "hluk"], cwd=UPSTREAM, env=env)
     cli = output / "hluk"
     shutil.copy2(WORK / "cargo/release/hluk", cli)
-    metadata = {"sources": pins(), "submodules": verify_upstream(), "inputs": build_inputs(),
+    metadata = {"sources": runtime_sources(), "submodules": verify_upstream(), "inputs": build_inputs(),
                 "kernel_sha256": digest(rebuilt), "embedded_kernel_sha256": digest(embedded),
                 "cli_sha256": digest(cli), "rust_build": RUST_BUILD,
                 "config_sha256": digest(app / ".config"),
@@ -361,12 +393,14 @@ def build(overlay=None, output=WORK):
 
 
 def compile_executable(destination):
+    require_source_build()
     run([*compiler_args("musl-gcc"), "-std=c11", "-O2", "-g", "-Wall", "-Wextra", "-Werror",
          "-march=x86-64", "-fPIE", "-pie", "-pthread", HERE / "tests/process.c",
          "-o", destination])
 
 
 def compile_guest_executable(source, destination):
+    require_source_build()
     run([*compiler_args("musl-gcc"), "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
          "-march=x86-64", "-fPIE", "-pie", "-pthread", source, "-o", destination])
 
@@ -403,14 +437,44 @@ def validate_result(case, output, returncode):
         raise RuntimeError(f"{case}: exit={returncode}; expected exactly one {expected!r}")
 
 
+def verify_kernel_metadata(metadata):
+    if not artifact_only():
+        patches = {name: [{"name": p.name, "sha256": digest(p)} for p in patch_files(name)]
+                   for name in PATCH_TARGETS}
+        if metadata["inputs"] != build_inputs() or metadata["sources"] != runtime_sources() or \
+                metadata["patches"] != patches:
+            raise RuntimeError("Guest kernel inputs changed; rebuild the Hyperlight artifacts")
+    if metadata["overlay_sha256"] != digest(HERE / "rootfs/kernel.conf"):
+        raise RuntimeError("Guest kernel configuration changed; rebuild the Hyperlight artifacts")
+    if metadata.get("guest_identity") != guest_identity():
+        raise RuntimeError("Guest kernel UID/GID changed; rebuild the Hyperlight artifacts")
+    if metadata.get("rust_build") != RUST_BUILD:
+        raise RuntimeError("Guest kernel host must use the verified release build")
+    if artifact_only():
+        verify_runtime_settings(metadata)
+    if metadata["embedded_kernel_sha256"] != metadata["kernel_sha256"]:
+        raise RuntimeError("Guest host embedded kernel does not match its built kernel")
+
+
+def verify_runtime_settings(metadata):
+    if metadata.get("kernel_cflags") != "-std=gnu17 -march=x86-64" or \
+            metadata.get("compiler_command") != compiler_args("gcc"):
+        raise RuntimeError("Runtime compiler settings do not match the artifact build")
+    if metadata.get("musl_interpreter_sha256") != digest("/lib/ld-musl-x86_64.so.1"):
+        raise RuntimeError("Guest musl interpreter does not match the artifact build")
+
+
 def verify_process_artifacts(guest):
-    verify_upstream()
-    prepare_patches()
+    if not artifact_only():
+        verify_upstream()
+        prepare_patches()
     metadata = json.loads((WORK / "build.json").read_text())
-    if metadata["inputs"] != build_inputs():
+    if not artifact_only() and metadata["inputs"] != build_inputs():
         raise RuntimeError("Build inputs changed; run make runtime-build before process tests")
     if metadata.get("rust_build") != RUST_BUILD:
         raise RuntimeError("Runtime must use the verified release build; run runtime-build")
+    if artifact_only():
+        verify_runtime_settings(metadata)
     if guest:
         if metadata["embedded_kernel_sha256"] != metadata["kernel_sha256"]:
             raise RuntimeError("Runtime embedded kernel does not match its built kernel")
@@ -453,7 +517,7 @@ def test(guest, *, prebuilt=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("preflight", "build-preflight", "fetch", "build",
+    parser.add_argument("command", choices=("preflight", "build-preflight", "check-runtime-pins", "fetch", "build",
                                            "test-native", "test-native-built", "test-guest"))
     command = parser.parse_args().command
     WORK.mkdir(parents=True, exist_ok=True)
@@ -466,6 +530,8 @@ def main():
             test(command == "test-guest", prebuilt=command == "test-native-built")
         elif command == "build-preflight":
             preflight(require_kvm=False)
+        elif command == "check-runtime-pins":
+            check_runtime_pins()
         else:
             {"preflight": preflight, "fetch": fetch, "build": build}[command]()
 

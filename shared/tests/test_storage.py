@@ -10,10 +10,43 @@ import storage
 
 
 class StorageTests(unittest.TestCase):
+    def test_shared_host_artifacts_reject_mixed_kernel_metadata_and_modified_tools(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "kernel-build").mkdir()
+            paths = {"host_sha256": root / "storage-host",
+                     "kernel_sha256": root / "kernel-build/elfloader_hyperlight-x86_64",
+                     "init_sha256": root / "pg-init", "probe_sha256": root / "storage-probe"}
+            metadata = {"inputs": {}, "rust_build": storage.runtime.RUST_BUILD,
+                        "guest_identity": storage.runtime.guest_identity()}
+            for field, path in paths.items():
+                path.write_bytes(field.encode())
+                metadata[field] = storage.runtime.digest(path)
+            kernel = {field: metadata[field] for field in ("kernel_sha256", "init_sha256")}
+            (root / "host.json").write_text(json.dumps(metadata))
+            (root / "kernel.json").write_text(json.dumps(kernel))
+            with patch.object(storage, "DATA", root), \
+                    patch.object(storage, "host_inputs", return_value={}), \
+                    patch.object(storage.runtime, "verify_kernel_metadata"):
+                storage.verify_host_artifacts()
+                for field, path in paths.items():
+                    original = path.read_bytes()
+                    path.write_bytes(b"modified")
+                    with self.subTest(field=field), self.assertRaisesRegex(RuntimeError, "Storage guest tool changed"):
+                        storage.verify_host_artifacts()
+                    path.write_bytes(original)
+                (root / "kernel.json").write_text(json.dumps(dict(kernel, kernel_sha256="other-kernel")))
+                with self.assertRaisesRegex(RuntimeError, "metadata disagree"):
+                    storage.verify_host_artifacts()
+                (root / "host.json").write_text(json.dumps(dict(metadata, inputs={"other-runtime": True})))
+                with self.assertRaisesRegex(RuntimeError, "build inputs changed"):
+                    storage.verify_host_artifacts()
+
     def test_packaging_and_running_reject_guest_identity_from_another_user(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(storage, "DATA", Path(temporary)), \
                 patch.object(storage, "inputs", return_value={}), \
+                patch.object(storage, "host_inputs", return_value={}), \
                 patch.object(storage.runtime, "verify_upstream"), \
                 patch.object(storage.runtime, "prepare_patches"), \
                 patch.object(storage.postgres, "prepare_sources"), \
@@ -33,6 +66,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(storage, "DATA", Path(temporary)), \
                 patch.object(storage, "inputs", return_value={}), \
+                patch.object(storage, "host_inputs", return_value={}), \
                 patch.object(storage.runtime, "verify_upstream"), \
                 patch.object(storage.runtime, "prepare_patches"), \
                 patch.object(storage.postgres, "prepare_sources"):

@@ -5,7 +5,7 @@ Native tools use unmodified sources; the musl guest server uses the
 [PG17 patch stack](patches/postgres/README.md). Build/runtime code, rootfs
 profiles, the Rust storage host, and validation suites live in [shared/](../shared/).
 Hyperlight/Unikraft pins come from [shared/sources.toml](../shared/sources.toml);
-runtime patches are shared with PG16 and PG18.
+runtime patches are shared with PG16, PG18, and PG19.
 
 ## Build and validate
 

@@ -1,0 +1,5 @@
+[postgres]
+version = "19.0"
+url = "https://ftp.postgresql.org/pub/source/v19.0/postgresql-19.0.tar.bz2"
+sha256 = "a89fd70efbad6a08c7dbed8d4872e3af30170d9e5ca9dc7906523be95b4e692d"
+license = "PostgreSQL; COPYRIGHT inside archive"

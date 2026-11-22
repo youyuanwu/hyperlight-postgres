@@ -16,7 +16,7 @@ class WiringTests(unittest.TestCase):
     def test_runtime_bundle_inputs_are_shared_but_postgres_package_inputs_are_version_local(self):
         runtime_inputs, host_inputs, package_inputs = [], [], []
         with patch.object(runtime, "digest", return_value="sha256"):
-            for major in ("16", "17", "18"):
+            for major in ("16", "17", "18", "19"):
                 with patch.object(runtime, "VERSION_DIR", runtime.HERE.parent / f"pg{major}"):
                     runtime_inputs.append(runtime.build_inputs())
                     host_inputs.append(storage.host_inputs())
@@ -28,6 +28,10 @@ class WiringTests(unittest.TestCase):
             self.assertEqual(host_inputs[0], host_inputs[2])
             self.assertNotEqual(package_inputs[0], package_inputs[2])
             self.assertNotEqual(package_inputs[1], package_inputs[2])
+            self.assertEqual(runtime_inputs[0], runtime_inputs[3])
+            self.assertEqual(host_inputs[0], host_inputs[3])
+            for inputs in package_inputs[:3]:
+                self.assertNotEqual(inputs, package_inputs[3])
             self.assertNotIn("postgres", runtime_inputs[0]["sources"])
             with patch.dict(runtime.os.environ, {"HL_PG_USE_SCCACHE": "1"}):
                 cached = runtime.build_inputs()
@@ -37,7 +41,7 @@ class WiringTests(unittest.TestCase):
 
     def test_root_and_version_makefiles_route_to_the_shared_implementation(self):
         repository = runtime.HERE.parent
-        commands = [(directory, selection) for major in ("16", "17", "18")
+        commands = [(directory, selection) for major in ("16", "17", "18", "19")
                     for directory, selection in ((repository, [f"PG={major}"]),
                                                  (repository / f"pg{major}", []))]
         for directory, selection in commands:

@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16, 17, 18]
+        pg: [16, 17, 18, 19]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}
@@ -156,7 +156,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [16, 17, 18]
+        pg: [16, 17, 18, 19]
     defaults:
       run:
         working-directory: pg${{ matrix.pg }}
@@ -169,6 +169,11 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+
+      - name: Reserve sample server ports from ephemeral allocation
+        run: |
+          reserved_ports=$(sysctl -n net.ipv4.ip_local_reserved_ports)
+          sudo -A sysctl -w "net.ipv4.ip_local_reserved_ports=${reserved_ports:+$reserved_ports,}55432-55434"
 
       - name: Install test and packaging dependencies
         run: |
